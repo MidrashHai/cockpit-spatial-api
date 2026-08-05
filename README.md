@@ -1,0 +1,1 @@
+# cockpit-spatial-api
