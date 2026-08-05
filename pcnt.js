@@ -221,42 +221,90 @@ function compute(lat, lon) {
   const shaar   = SHAAR_TABLE[sIdx]   || SHAAR_TABLE[5];
   const mishkan = MISHKAN_TABLE[mshIdx]|| MISHKAN_TABLE[5];
 
-  // Étape 6 · Shem Graine · Zera haMakom™ · 4e décimale
-  const dec4Lat  = pLat.dec7[3];
-  const dec4Lon  = pLon.dec7[3];
+  // Étape 6 · Graine · Zera haMakom™ · seqLat[3] et seqLon[3] (format canonique ICL™)
+  // LOI : la Graine est le 4e indice de la séquence condensée — non la 4e décimale brute
+  const graineLatIdx = seqLat[3];
+  const graineLonIdx = seqLon[3];
   const shemGraine = {
-    heb:     LM[dec4Lat].heb + '·' + LM[dec4Lon].heb,
-    lat:     LM[dec4Lat].let + '·' + LM[dec4Lon].let,
-    fr:      'Cellule 10 m · ' + LM[dec4Lat].let + ' (Nord/Sud) · ' + LM[dec4Lon].let + ' (Est/Ouest)',
-    dec4_lat: dec4Lat,
-    dec4_lon: dec4Lon,
+    heb:      LM[graineLatIdx].heb + '·' + LM[graineLonIdx].heb,
+    lat:      LM[graineLatIdx].let + '·' + LM[graineLonIdx].let,
+    fr:       'Cellule 10 m · ' + LM[graineLatIdx].let + ' (Nord/Sud) · ' + LM[graineLonIdx].let + ' (Est/Ouest)',
+    idx_lat:  graineLatIdx,
+    idx_lon:  graineLonIdx,
     cellule_m: 10,
   };
 
-  // Étape 7 · ICL™ · 8 lettres
-  const iclLat = seqLat.map(n => LM[n].let).join('·');
-  const iclLon = seqLon.map(n => LM[n].let).join('·');
+  // Étape 7 · Mishkan Index · (seqLat[3] + seqLon[3]) mod 10
+  const mishkanIdx  = (graineLatIdx + graineLonIdx) % 10;
+  const mishkanShem = MISHKAN_TABLE[mishkanIdx] || MISHKAN_TABLE[5];
 
-  // Étape 8 · Guématria
+  // Étape 8 · ICL™ · Format Canonique · LLLL│OOOO
+  const identifiant = seqLat.join('') + '│' + seqLon.join('');
+  const iclLat      = seqLat.map(n => LM[n].let).join('·');
+  const iclLon      = seqLon.map(n => LM[n].let).join('·');
+
+  // Étape 9 · Guématria · somme des indices canoniques
   const gLat   = seqLat.reduce((a, b) => a + b, 0);
   const gLon   = seqLon.reduce((a, b) => a + b, 0);
   const gTotal = gLat + gLon;
+
+  const ns = lat >= 0 ? 'N' : 'S';
+  const eo = lon >= 0 ? 'E' : 'O';
 
   return {
     version:    '3.1',
     status:     'PUBLISHED',
     protocol:   'PCNT-v3.1',
     codex:      'Codex Shem haMakomot v3.1',
-    signatureId: genSignatureId(lat, lon),
-    coordinates: {
-      lat: parseFloat(lat.toFixed(7)),
-      lon: parseFloat(lon.toFixed(7)),
+
+    // ── FORMAT CANONIQUE ICL™ ─────────────────────────────────
+    icl: {
+      signatureId:  genSignatureId(lat, lon),
+      identifiant:  identifiant,          // LLLL│OOOO
+      territoire:   seqLat.join(''),      // LLLL (Lat)
+      porte:        seqLon.join(''),      // OOOO (Lon)
+      lettres:      iclLat + '|' + iclLon,
+      guematria: {
+        g_lat:   gLat,
+        g_lon:   gLon,
+        g_total: gTotal,
+      },
+      graine: {
+        idx_lat:   graineLatIdx,
+        idx_lon:   graineLonIdx,
+        lettre_lat: LM[graineLatIdx].let,
+        lettre_lon: LM[graineLonIdx].let,
+        heb:       shemGraine.heb,
+        lat:       shemGraine.lat,
+        cellule_m: 10,
+      },
+      mishkan_index: {
+        calcul:  `(${graineLatIdx}+${graineLonIdx}) mod 10 = ${mishkanIdx}`,
+        index:   mishkanIdx,
+        shem:    mishkanShem.l,
+        heb:     mishkanShem.h,
+        fr:      mishkanShem.fr,
+        sig:     mishkanShem.s,
+      },
+      coordonnees: `${Math.abs(lat).toFixed(7)}° ${ns} · ${Math.abs(lon).toFixed(7)}° ${eo}`,
+      source:      'GPS',
+      regime:      'EXP',
     },
+
+    // ── TROIS SHEM ────────────────────────────────────────────
+    shem_makom:   { heb: makom.h,   lat: makom.l,   fr: makom.fr,   sig: makom.s   },
+    shem_shaar:   { heb: shaar.h,   lat: shaar.l,   fr: shaar.fr,   sig: shaar.s   },
+    shem_mishkan: { heb: mishkan.h, lat: mishkan.l, fr: mishkan.fr, sig: mishkan.s },
+    shem_graine:  shemGraine,
+
+    // ── GRANDE FAMILLE ────────────────────────────────────────
     grande_famille: {
-      lat:     latEntierSeq.map(n => LM[n].let).join('·'),
-      lon:     lonEntierSeq.map(n => LM[n].let).join('·'),
-      shem:    shemFamille,
+      lat:  latEntierSeq.map(n => LM[n].let).join('·'),
+      lon:  lonEntierSeq.map(n => LM[n].let).join('·'),
+      shem: shemFamille,
     },
+
+    // ── PONDÉRATION (détail technique) ───────────────────────
     ponderation: {
       val_lat:     parseFloat(valLat.toFixed(4)),
       seq_lat:     seqLat,
@@ -265,21 +313,8 @@ function compute(lat, lon) {
       seq_lon:     seqLon,
       lecture_lon: lectureLon,
     },
-    icl: {
-      lettres:  iclLat + '|' + iclLon,
-      lat_seq:  seqLat,
-      lon_seq:  seqLon,
-    },
-    shem_makom:   { heb: makom.h,   lat: makom.l,   fr: makom.fr,   sig: makom.s   },
-    shem_shaar:   { heb: shaar.h,   lat: shaar.l,   fr: shaar.fr,   sig: shaar.s   },
-    shem_mishkan: { heb: mishkan.h, lat: mishkan.l, fr: mishkan.fr, sig: mishkan.s },
-    shem_graine:  shemGraine,
-    guematria: {
-      g_lat:   gLat,
-      g_lon:   gLon,
-      g_total: gTotal,
-    },
-    checksum: genChecksum(lat, lon),
+
+    checksum:           genChecksum(lat, lon),
     statut_epistemique: 'EXP',
   };
 }
