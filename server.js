@@ -11,7 +11,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
-const { resolvePresenceHandler } = require('./resolve-presence');
+const { compute } = require('./pcnt');
+const { makeResolvePresenceHandler } = require('./resolve-presence');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -31,12 +32,9 @@ app.get('/health', (req, res) => {
 });
 
 // ── POST /v1/territorial-context ──────────────────────────────
-// Entrée  : { "latitude": float, "longitude": float }
-// Sortie  : TerritorialContext™ v3.1 JSON
 app.post('/v1/territorial-context', (req, res) => {
   const { latitude, longitude } = req.body;
 
-  // Validation présence
   if (latitude === undefined || longitude === undefined) {
     return res.status(400).json({
       error: {
@@ -78,7 +76,6 @@ app.post('/v1/territorial-context', (req, res) => {
     const t0      = Date.now();
     const context = compute(lat, lon);
     const ms      = Date.now() - t0;
-
     return res.json({ ...context, computation_ms: ms });
   } catch (err) {
     return res.status(500).json({
@@ -88,8 +85,6 @@ app.post('/v1/territorial-context', (req, res) => {
 });
 
 // ── POST /v1/territorial-context/batch ────────────────────────
-// Entrée  : { "locations": [{ "id": string, "latitude": float, "longitude": float }] }
-// Sortie  : { results: [...], total, success, errors, computation_ms }
 app.post('/v1/territorial-context/batch', (req, res) => {
   const { locations } = req.body;
 
@@ -132,10 +127,10 @@ app.post('/v1/territorial-context/batch', (req, res) => {
     computation_ms: Date.now() - t0,
   });
 });
-// ── POST /v1/resolve-presence ─────────────────────────────────
-app.post('/v1/resolve-presence', async (req, res) => {
-  return resolvePresenceHandler(req, res);
-});
+
+// ── POST /v1/resolve-presence ──────────────────────────────────
+app.post('/v1/resolve-presence', makeResolvePresenceHandler(compute));
+
 // ── GET /v1/info ───────────────────────────────────────────────
 app.get('/v1/info', (req, res) => {
   res.json({
@@ -146,9 +141,9 @@ app.get('/v1/info', (req, res) => {
     endpoints: [
       'POST /v1/territorial-context',
       'POST /v1/territorial-context/batch',
+      'POST /v1/resolve-presence',
       'GET  /v1/info',
       'GET  /health',
-      'POST /v1/resolve-presence',
     ],
   });
 });
