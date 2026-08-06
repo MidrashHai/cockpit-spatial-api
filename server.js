@@ -12,7 +12,6 @@ require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
 const { compute } = require('./pcnt');
-const { makeResolvePresenceHandler } = require('./resolve-presence');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -129,7 +128,10 @@ app.post('/v1/territorial-context/batch', (req, res) => {
 });
 
 // ── POST /v1/resolve-presence ──────────────────────────────────
-app.post('/v1/resolve-presence', makeResolvePresenceHandler(compute));
+app.post('/v1/resolve-presence', async (req, res) => {
+  const { makeResolvePresenceHandler } = require('./resolve-presence');
+  return makeResolvePresenceHandler(compute)(req, res);
+});
 
 // ── GET /v1/info ───────────────────────────────────────────────
 app.get('/v1/info', (req, res) => {
