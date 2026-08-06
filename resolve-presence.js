@@ -1,13 +1,18 @@
+'use strict';
+
 const { Pool } = require('pg');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
-const { computeV3 } = require('./pcnt');
+
+let compute;
 
 async function resolvePresence({ person_id, lat, lon, session_id = null }) {
-  const icl_result = computeV3(lat, lon);
-  const icl_detectee = icl_result.identifiant;
+  if (!compute) compute = require('./pcnt').compute;
+
+  const icl_result = compute(lat, lon);
+  const icl_detectee = icl_result.icl.identifiant;
 
   const zone_query = await pool.query(
     'SELECT id, nom, collectivite, mishkan_index FROM zones WHERE icl = $1 AND actif = TRUE LIMIT 1',
@@ -49,23 +54,44 @@ async function resolvePresence({ person_id, lat, lon, session_id = null }) {
       ? { icl: icl_detectee, nom: zone.nom, collectivite: zone.collectivite, mishkan_index: zone.mishkan_index, contexte_actif: true }
       : { icl: icl_detectee, contexte_actif: false, message: 'Lieu non gouverné' },
     role: role_resolu,
-    ressources: ressources.map(r => ({ id: r.id, titre: r.titre, contenu: r.contenu, type: r.type, url: r.url_externe || null, priorite: r.priorite })),
-    icl_computed: { identifiant: icl_result.identifiant, guematria: icl_result.guematria, mishkan_index: icl_result.mishkanIndex },
+    ressources: ressources.map(r => ({
+      id: r.id,
+      titre: r.titre,
+      contenu: r.contenu,
+      type: r.type,
+      url: r.url_externe || null,
+      priorite: r.priorite,
+    })),
+    icl_computed: {
+      identifiant: icl_result.icl.identifiant,
+      guematria: icl_result.icl.guematria,
+      mishkan_index: icl_result.icl.mishkan_index.index,
+    },
   };
 }
 
 async function resolvePresenceHandler(req, res) {
   const { person_id, lat, lon, session_id } = req.body || {};
+
   if (!person_id || typeof person_id !== 'string' || person_id.trim() === '')
     return res.status(400).json({ status: 'error', code: 'ERR_PERSON_ID_MISSING', message: 'person_id requis' });
+
   const latNum = parseFloat(lat);
   const lonNum = parseFloat(lon);
+
   if (isNaN(latNum) || latNum < -90 || latNum > 90)
     return res.status(400).json({ status: 'error', code: 'ERR_LAT_INVALID', message: 'lat invalide' });
+
   if (isNaN(lonNum) || lonNum < -180 || lonNum > 180)
     return res.status(400).json({ status: 'error', code: 'ERR_LON_INVALID', message: 'lon invalide' });
+
   try {
-    const result = await resolvePresence({ person_id: person_id.trim(), lat: latNum, lon: lonNum, session_id: session_id || null });
+    const result = await resolvePresence({
+      person_id: person_id.trim(),
+      lat: latNum,
+      lon: lonNum,
+      session_id: session_id || null,
+    });
     return res.status(200).json(result);
   } catch (err) {
     console.error('[resolve-presence]', err.message);
