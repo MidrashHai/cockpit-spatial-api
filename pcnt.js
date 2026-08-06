@@ -222,7 +222,8 @@ function compute(lat, lon) {
   const mishkanIdx  = (graineLatIdx + graineLonIdx) % 10;
   const mishkanShem = MISHKAN_TABLE[mishkanIdx] || MISHKAN_TABLE[5];
 
-  const identifiant = seqLat.join('') + '│' + seqLon.join('');
+  // ── Format ICL™ · séparateur pipe ASCII avec espaces ─────────
+  const identifiant = seqLat.join('') + ' | ' + seqLon.join('');
   const iclLat      = seqLat.map(n => LM[n].let).join('·');
   const iclLon      = seqLon.map(n => LM[n].let).join('·');
 
