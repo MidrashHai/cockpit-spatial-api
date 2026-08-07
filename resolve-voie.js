@@ -4,7 +4,7 @@
 // McOmh.ai · CorreIA LLC · C-06
 //
 // ── Version ─────────────────────────────────────────────────────
-// v1.5 · 7 Août 2026 · 12:30 UTC
+// v1.6 · 7 Août 2026 · 13:00 UTC
 //
 // ── Corrections appliquées ──────────────────────────────────────
 // v1.1 · Jointure shem_reference : icl → indice (colonne réelle)
@@ -12,6 +12,7 @@
 // v1.3 · Client dédié + SET search_path TO public
 // v1.4 · Pool autonome dans le module
 // v1.5 · Schema public explicite dans chaque FROM de la requête SQL
+// v1.6 · Pool créé à l'intérieur du handler — DATABASE_URL lu à chaque requête
 //        Contourne définitivement le problème de search_path :
 //        Render/PgBouncer neutralise les paramètres de session du rôle.
 //        FROM public.voies et FROM public.shem_reference sont absolus —
@@ -21,15 +22,15 @@
 
 const { Pool } = require('pg');
 
-const voiePool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-  max: 3,
-  idleTimeoutMillis: 10000
-});
-
 function makeResolveVoieHandler() {
   return async function resolveVoie(req, res) {
+    // Pool créé à chaque requête — garantit DATABASE_URL actuelle
+    const voiePool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+      max: 1,
+      idleTimeoutMillis: 5000
+    });
     const nom = (req.query.nom || '').trim().toUpperCase();
 
     if (!nom || nom.length < 2) {
@@ -125,14 +126,15 @@ function makeResolveVoieHandler() {
         };
       });
 
-      return res.status(200).json(
-        voies.length === 1
-          ? { version: '1.5', protocol: 'PCNT-v3.1', ...voies[0] }
-          : { version: '1.5', protocol: 'PCNT-v3.1', count: voies.length, voies }
-      );
+      const result = voies.length === 1
+        ? { version: '1.6', protocol: 'PCNT-v3.1', ...voies[0] }
+        : { version: '1.6', protocol: 'PCNT-v3.1', count: voies.length, voies };
+      await voiePool.end();
+      return res.status(200).json(result);
 
     } catch (err) {
       console.error('[resolve-voie] Erreur DB:', err.message, 'code:', err.code);
+      try { await voiePool.end(); } catch(e) {}
       return res.status(500).json({
         error: 'Erreur serveur',
         detail: err.message,
