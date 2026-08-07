@@ -1,9 +1,32 @@
 /**
- * Cockpit Spatial™ API · v1.0
+ * Cockpit Spatial™ API · v1.1
  * Makom Intelligence™ · CorreIA LLC
  *
  * Serveur Express · expose PCNT™ v3.1 comme endpoint REST
  * Compatible avec le stack SHC Governance Engine existant
+ *
+ * ── Version ────────────────────────────────────────────────────
+ * v1.1 · 7 Août 2026 · 10:45 UTC
+ *
+ * ── Chantier actif ─────────────────────────────────────────────
+ * C-06 · Endpoint GET /v1/voie · Carte maps.addressme.ci
+ *
+ * ── Correction appliquée dans cette version ────────────────────
+ * Problème : relation "voies" does not exist depuis le pool HTTP
+ * Cause    : double injection de ?options= dans la connectionString
+ *            — le code ajoutait ?options= ET la variable DATABASE_URL
+ *            dans Render portait déjà ?options=-c%20search_path%3Dpublic
+ *            → URL malformée → driver pg ne parsait plus le search_path
+ * Solution : pool utilise process.env.DATABASE_URL directement,
+ *            sans aucune modification dans le code.
+ *            Le search_path est porté uniquement par la variable
+ *            DATABASE_URL dans les Environment Variables Render :
+ *            postgresql://...@.../mk_omhai?options=-c%20search_path%3Dpublic
+ *
+ * ── Historique des versions ────────────────────────────────────
+ * v1.0 · 6 Août 2026 · Déploiement initial · C-01 / C-02
+ *        Endpoints : /health · /v1/territorial-context · /v1/resolve-presence
+ * v1.1 · 7 Août 2026 · Ajout GET /v1/voie · fix search_path pool pg
  */
 
 'use strict';
@@ -19,11 +42,8 @@ const app  = express();
 const PORT = process.env.PORT || 3001;
 
 // ── Connexion PostgreSQL ───────────────────────────────────────
-const rawDbUrl = process.env.DATABASE_URL || '';
-const dbUrl = rawDbUrl + (rawDbUrl.includes('?') ? '&' : '?') + 'options=-c%20search_path%3Dpublic';
-
 const pool = new Pool({
-  connectionString: dbUrl,
+  connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
