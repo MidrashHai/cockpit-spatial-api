@@ -4,7 +4,7 @@
 // McOmh.ai · CorreIA LLC · C-06
 //
 // ── Version ─────────────────────────────────────────────────────
-// v1.2 · 7 Août 2026 · 11:30 UTC
+// v1.3 · 7 Août 2026 · 11:45 UTC
 //
 // ── Corrections appliquées ──────────────────────────────────────
 // v1.1 · Jointure shem_reference corrigée : icl → indice
@@ -14,7 +14,10 @@
 //        Erreur masquée par catch qui affichait "relation voies does not exist"
 //        au lieu de l'erreur réelle "column sd_m.icl does not exist".
 // v1.2 · Catch enrichi : retourne code + hint PostgreSQL pour diagnostic
-//        Permet d'identifier la vraie erreur depuis l'endpoint HTTP.
+//        Révèle code 42P01 = table non trouvée par le pool Express.
+// v1.3 · Client dédié avec SET search_path TO public avant chaque requête
+//        Garantit visibilité de voies même si le pool Express démarre
+//        avec un search_path vide sur ses connexions persistantes.
 
 'use strict';
 
@@ -29,7 +32,12 @@ function makeResolveVoieHandler(pool) {
     }
 
     try {
-      const voieResult = await pool.query(
+      // Forcer search_path sur ce client pour garantir visibilité de voies
+      const client = await pool.connect();
+      let voieResult;
+      try {
+        await client.query('SET search_path TO public');
+        voieResult = await client.query(
         `SELECT
            v.id,
            v.st_name,
@@ -70,7 +78,10 @@ function makeResolveVoieHandler(pool) {
          ORDER BY LENGTH(v.st_name) ASC
          LIMIT 5`,
         [`%${nom}%`]
-      );
+        );
+      } finally {
+        client.release();
+      }
 
       if (voieResult.rows.length === 0) {
         return res.status(404).json({
