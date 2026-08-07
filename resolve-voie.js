@@ -4,24 +4,31 @@
 // McOmh.ai · CorreIA LLC · C-06
 //
 // ── Version ─────────────────────────────────────────────────────
-// v1.3 · 7 Août 2026 · 11:45 UTC
+// v1.4 · 7 Août 2026 · 12:00 UTC
 //
 // ── Corrections appliquées ──────────────────────────────────────
-// v1.1 · Jointure shem_reference corrigée : icl → indice
-//        La table shem_reference n'a pas de colonne "icl" — elle a "indice"
-//        (integer = mishkan_index) et "famille" (MAKOM/SHAAR/MISHKAN).
-//        Jointure : mishkan_index_debut/fin → shem_reference.indice
-//        Erreur masquée par catch qui affichait "relation voies does not exist"
-//        au lieu de l'erreur réelle "column sd_m.icl does not exist".
-// v1.2 · Catch enrichi : retourne code + hint PostgreSQL pour diagnostic
-//        Révèle code 42P01 = table non trouvée par le pool Express.
-// v1.3 · Client dédié avec SET search_path TO public avant chaque requête
-//        Garantit visibilité de voies même si le pool Express démarre
-//        avec un search_path vide sur ses connexions persistantes.
+// v1.1 · Jointure shem_reference : icl → indice (colonne réelle)
+// v1.2 · Catch enrichi : code + hint PostgreSQL pour diagnostic
+// v1.3 · Client dédié + SET search_path TO public
+// v1.4 · Pool autonome créé dans le module — indépendant du pool Express
+//        Contourne le problème de search_path sur le pool partagé.
+//        Le pool Express (server.js) garde ses connexions persistantes
+//        avec un search_path vide. Ce pool local crée ses propres
+//        connexions avec DATABASE_URL directement et voit public.
 
 'use strict';
 
-function makeResolveVoieHandler(pool) {
+const { Pool } = require('pg');
+
+// Pool autonome — indépendant du pool Express
+const voiePool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 3,
+  idleTimeoutMillis: 10000
+});
+
+function makeResolveVoieHandler() {
   return async function resolveVoie(req, res) {
     const nom = (req.query.nom || '').trim().toUpperCase();
 
@@ -32,52 +39,49 @@ function makeResolveVoieHandler(pool) {
     }
 
     try {
-      // Forcer search_path sur ce client pour garantir visibilité de voies
-      const client = await pool.connect();
+      const client = await voiePool.connect();
       let voieResult;
       try {
         await client.query('SET search_path TO public');
         voieResult = await client.query(
-        `SELECT
-           v.id,
-           v.st_name,
-           v.city,
-           v.longueur_m,
-           v.icl_debut,
-           v.icl_fin,
-           v.mishkan_index_debut,
-           v.mishkan_index_fin,
-           -- Shemot seuil début via mishkan_index_debut
-           sd_m.shem_lat   AS debut_makom_lat,
-           sd_m.shem_heb   AS debut_makom_heb,
-           sd_m.shem_fr    AS debut_makom_fr,
-           sd_s.shem_lat   AS debut_shaar_lat,
-           sd_s.shem_heb   AS debut_shaar_heb,
-           sd_s.shem_fr    AS debut_shaar_fr,
-           sd_mk.shem_lat  AS debut_mishkan_lat,
-           sd_mk.shem_heb  AS debut_mishkan_heb,
-           sd_mk.shem_fr   AS debut_mishkan_fr,
-           -- Shemot seuil fin via mishkan_index_fin
-           sf_m.shem_lat   AS fin_makom_lat,
-           sf_m.shem_heb   AS fin_makom_heb,
-           sf_m.shem_fr    AS fin_makom_fr,
-           sf_s.shem_lat   AS fin_shaar_lat,
-           sf_s.shem_heb   AS fin_shaar_heb,
-           sf_s.shem_fr    AS fin_shaar_fr,
-           sf_mk.shem_lat  AS fin_mishkan_lat,
-           sf_mk.shem_heb  AS fin_mishkan_heb,
-           sf_mk.shem_fr   AS fin_mishkan_fr
-         FROM voies v
-         LEFT JOIN shem_reference sd_m  ON sd_m.indice = v.mishkan_index_debut AND sd_m.famille = 'MAKOM'
-         LEFT JOIN shem_reference sd_s  ON sd_s.indice = v.mishkan_index_debut AND sd_s.famille = 'SHAAR'
-         LEFT JOIN shem_reference sd_mk ON sd_mk.indice = v.mishkan_index_debut AND sd_mk.famille = 'MISHKAN'
-         LEFT JOIN shem_reference sf_m  ON sf_m.indice = v.mishkan_index_fin   AND sf_m.famille = 'MAKOM'
-         LEFT JOIN shem_reference sf_s  ON sf_s.indice = v.mishkan_index_fin   AND sf_s.famille = 'SHAAR'
-         LEFT JOIN shem_reference sf_mk ON sf_mk.indice = v.mishkan_index_fin  AND sf_mk.famille = 'MISHKAN'
-         WHERE UPPER(v.st_name) LIKE $1
-         ORDER BY LENGTH(v.st_name) ASC
-         LIMIT 5`,
-        [`%${nom}%`]
+          `SELECT
+             v.id,
+             v.st_name,
+             v.city,
+             v.longueur_m,
+             v.icl_debut,
+             v.icl_fin,
+             v.mishkan_index_debut,
+             v.mishkan_index_fin,
+             sd_m.shem_lat   AS debut_makom_lat,
+             sd_m.shem_heb   AS debut_makom_heb,
+             sd_m.shem_fr    AS debut_makom_fr,
+             sd_s.shem_lat   AS debut_shaar_lat,
+             sd_s.shem_heb   AS debut_shaar_heb,
+             sd_s.shem_fr    AS debut_shaar_fr,
+             sd_mk.shem_lat  AS debut_mishkan_lat,
+             sd_mk.shem_heb  AS debut_mishkan_heb,
+             sd_mk.shem_fr   AS debut_mishkan_fr,
+             sf_m.shem_lat   AS fin_makom_lat,
+             sf_m.shem_heb   AS fin_makom_heb,
+             sf_m.shem_fr    AS fin_makom_fr,
+             sf_s.shem_lat   AS fin_shaar_lat,
+             sf_s.shem_heb   AS fin_shaar_heb,
+             sf_s.shem_fr    AS fin_shaar_fr,
+             sf_mk.shem_lat  AS fin_mishkan_lat,
+             sf_mk.shem_heb  AS fin_mishkan_heb,
+             sf_mk.shem_fr   AS fin_mishkan_fr
+           FROM voies v
+           LEFT JOIN shem_reference sd_m  ON sd_m.indice = v.mishkan_index_debut AND sd_m.famille = 'MAKOM'
+           LEFT JOIN shem_reference sd_s  ON sd_s.indice = v.mishkan_index_debut AND sd_s.famille = 'SHAAR'
+           LEFT JOIN shem_reference sd_mk ON sd_mk.indice = v.mishkan_index_debut AND sd_mk.famille = 'MISHKAN'
+           LEFT JOIN shem_reference sf_m  ON sf_m.indice = v.mishkan_index_fin   AND sf_m.famille = 'MAKOM'
+           LEFT JOIN shem_reference sf_s  ON sf_s.indice = v.mishkan_index_fin   AND sf_s.famille = 'SHAAR'
+           LEFT JOIN shem_reference sf_mk ON sf_mk.indice = v.mishkan_index_fin  AND sf_mk.famille = 'MISHKAN'
+           WHERE UPPER(v.st_name) LIKE $1
+           ORDER BY LENGTH(v.st_name) ASC
+           LIMIT 5`,
+          [`%${nom}%`]
         );
       } finally {
         client.release();
@@ -130,18 +134,16 @@ function makeResolveVoieHandler(pool) {
 
       return res.status(200).json(
         voies.length === 1
-          ? { version: '1.1', protocol: 'PCNT-v3.1', ...voies[0] }
-          : { version: '1.1', protocol: 'PCNT-v3.1', count: voies.length, voies }
+          ? { version: '1.4', protocol: 'PCNT-v3.1', ...voies[0] }
+          : { version: '1.4', protocol: 'PCNT-v3.1', count: voies.length, voies }
       );
 
     } catch (err) {
-      console.error('[resolve-voie] Erreur DB:', err.message);
-      console.error('[resolve-voie] Stack:', err.stack);
+      console.error('[resolve-voie] Erreur DB:', err.message, 'code:', err.code);
       return res.status(500).json({
         error: 'Erreur serveur',
         detail: err.message,
-        code: err.code || null,
-        hint: err.hint || null
+        code: err.code || null
       });
     }
   };
