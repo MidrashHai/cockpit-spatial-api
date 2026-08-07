@@ -1,7 +1,18 @@
 // resolve-voie.js
 // GET /v1/voie?nom=RUE+DOUBASSI+KABAH
 // Retourne ICL début/fin + Shemot + longueur depuis la table voies
-// McOmh.ai · CorreIA LLC · C-06 · Août 2026
+// McOmh.ai · CorreIA LLC · C-06
+//
+// ── Version ─────────────────────────────────────────────────────
+// v1.1 · 7 Août 2026 · 11:00 UTC
+//
+// ── Correction appliquée ────────────────────────────────────────
+// La table shem_reference n'a pas de colonne "icl" — elle a "indice"
+// (integer = mishkan_index) et "famille" (MAKOM/SHAAR/MISHKAN).
+// La jointure se fait via mishkan_index_debut/fin → shem_reference.indice
+// et non via icl_debut/fin → shem_reference.icl (colonne inexistante).
+// C'était la vraie erreur depuis le début — masquée par un catch
+// qui affichait "relation voies does not exist" au lieu de l'erreur réelle.
 
 'use strict';
 
@@ -26,6 +37,7 @@ function makeResolveVoieHandler(pool) {
            v.icl_fin,
            v.mishkan_index_debut,
            v.mishkan_index_fin,
+           -- Shemot seuil début via mishkan_index_debut
            sd_m.shem_lat   AS debut_makom_lat,
            sd_m.shem_heb   AS debut_makom_heb,
            sd_m.shem_fr    AS debut_makom_fr,
@@ -35,6 +47,7 @@ function makeResolveVoieHandler(pool) {
            sd_mk.shem_lat  AS debut_mishkan_lat,
            sd_mk.shem_heb  AS debut_mishkan_heb,
            sd_mk.shem_fr   AS debut_mishkan_fr,
+           -- Shemot seuil fin via mishkan_index_fin
            sf_m.shem_lat   AS fin_makom_lat,
            sf_m.shem_heb   AS fin_makom_heb,
            sf_m.shem_fr    AS fin_makom_fr,
@@ -45,12 +58,12 @@ function makeResolveVoieHandler(pool) {
            sf_mk.shem_heb  AS fin_mishkan_heb,
            sf_mk.shem_fr   AS fin_mishkan_fr
          FROM voies v
-         LEFT JOIN shem_reference sd_m  ON sd_m.icl = v.icl_debut AND sd_m.famille = 'MAKOM'
-         LEFT JOIN shem_reference sd_s  ON sd_s.icl = v.icl_debut AND sd_s.famille = 'SHAAR'
-         LEFT JOIN shem_reference sd_mk ON sd_mk.icl = v.icl_debut AND sd_mk.famille = 'MISHKAN'
-         LEFT JOIN shem_reference sf_m  ON sf_m.icl = v.icl_fin   AND sf_m.famille = 'MAKOM'
-         LEFT JOIN shem_reference sf_s  ON sf_s.icl = v.icl_fin   AND sf_s.famille = 'SHAAR'
-         LEFT JOIN shem_reference sf_mk ON sf_mk.icl = v.icl_fin  AND sf_mk.famille = 'MISHKAN'
+         LEFT JOIN shem_reference sd_m  ON sd_m.indice = v.mishkan_index_debut AND sd_m.famille = 'MAKOM'
+         LEFT JOIN shem_reference sd_s  ON sd_s.indice = v.mishkan_index_debut AND sd_s.famille = 'SHAAR'
+         LEFT JOIN shem_reference sd_mk ON sd_mk.indice = v.mishkan_index_debut AND sd_mk.famille = 'MISHKAN'
+         LEFT JOIN shem_reference sf_m  ON sf_m.indice = v.mishkan_index_fin   AND sf_m.famille = 'MAKOM'
+         LEFT JOIN shem_reference sf_s  ON sf_s.indice = v.mishkan_index_fin   AND sf_s.famille = 'SHAAR'
+         LEFT JOIN shem_reference sf_mk ON sf_mk.indice = v.mishkan_index_fin  AND sf_mk.famille = 'MISHKAN'
          WHERE UPPER(v.st_name) LIKE $1
          ORDER BY LENGTH(v.st_name) ASC
          LIMIT 5`,
@@ -104,8 +117,8 @@ function makeResolveVoieHandler(pool) {
 
       return res.status(200).json(
         voies.length === 1
-          ? { version: '3.1', protocol: 'PCNT-v3.1', ...voies[0] }
-          : { version: '3.1', protocol: 'PCNT-v3.1', count: voies.length, voies }
+          ? { version: '1.1', protocol: 'PCNT-v3.1', ...voies[0] }
+          : { version: '1.1', protocol: 'PCNT-v3.1', count: voies.length, voies }
       );
 
     } catch (err) {
