@@ -19,10 +19,12 @@ const app  = express();
 const PORT = process.env.PORT || 3001;
 
 // ── Connexion PostgreSQL ───────────────────────────────────────
+const rawDbUrl = process.env.DATABASE_URL || '';
+const dbUrl = rawDbUrl + (rawDbUrl.includes('?') ? '&' : '?') + 'options=-c%20search_path%3Dpublic';
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-  options: '-c search_path=public'
+  connectionString: dbUrl,
+  ssl: { rejectUnauthorized: false }
 });
 
 app.use(cors());
