@@ -1,10 +1,11 @@
 // resolve-voie.js
-// Version     : v1.9
+// Version     : v1.10
 // Date        : 2026-08-08
-// Contexte    : Normalisation apostrophe typographique Unicode \u2019 → ASCII '
-//               GeoJSON embarqué dans HTML stocke RUE ADAM\u2019S YAO
-//               Base PostgreSQL stocke RUE ADAM'S YAO (apostrophe ASCII)
-//               Sans normalisation → ERR_VOIE_NOT_FOUND → affichage 0 m
+// Contexte    : Suppression normalisation apostrophe (introduite en v1.9)
+//               La base PostgreSQL stocke \u2019 (apostrophe typographique)
+//               Le GeoJSON HTML envoie aussi \u2019
+//               La normalisation vers ASCII ' causait un mismatch
+//               Solution : laisser le nom tel quel — même caractère des deux côtés
 //               pg.Client conservé (42P01 résolu en v1.7)
 //               Colonnes corrigées (42703 résolu en v1.8)
 // Auteur      : McOmh.ai · Makom Intelligence™ · CorreIA LLC
@@ -15,13 +16,8 @@ const { Client } = require('pg');
 
 function makeResolveVoieHandler() {
   return async function resolveVoieHandler(req, res) {
-    const nomBrut = (req.query.nom || '').trim();
 
-    // Normaliser apostrophes typographiques Unicode vers ASCII
-    const nom = nomBrut
-      .replace(/\u2019/g, "'")  // ' RIGHT SINGLE QUOTATION MARK
-      .replace(/\u2018/g, "'")  // ' LEFT SINGLE QUOTATION MARK
-      .replace(/\u02BC/g, "'"); // ʼ MODIFIER LETTER APOSTROPHE
+    const nom = (req.query.nom || '').trim();
 
     if (!nom) {
       return res.status(400).json({
@@ -77,7 +73,7 @@ function makeResolveVoieHandler() {
       const row = result.rows[0];
 
       return res.status(200).json({
-        version: '1.9',
+        version: '1.10',
         status: 'OK',
         voie: {
           nom:         row.st_name,
