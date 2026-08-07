@@ -1,12 +1,12 @@
 // resolve-voie.js
-// Version     : v1.8
+// Version     : v1.9
 // Date        : 2026-08-08
-// Heure       : cycle C-06 · correction colonnes voies
-// Contexte    : v1.7 → 42703 "column v.mishkan_debut does not exist"
-//               Colonnes réelles vérifiées sur pod hn28j :
-//               mishkan_index_debut / mishkan_index_fin (pas mishkan_debut/fin)
-//               idx_makom_debut / idx_makom_fin (clé jointure shem_reference)
+// Contexte    : Normalisation apostrophe typographique Unicode \u2019 → ASCII '
+//               GeoJSON embarqué dans HTML stocke RUE ADAM\u2019S YAO
+//               Base PostgreSQL stocke RUE ADAM'S YAO (apostrophe ASCII)
+//               Sans normalisation → ERR_VOIE_NOT_FOUND → affichage 0 m
 //               pg.Client conservé (42P01 résolu en v1.7)
+//               Colonnes corrigées (42703 résolu en v1.8)
 // Auteur      : McOmh.ai · Makom Intelligence™ · CorreIA LLC
 
 'use strict';
@@ -15,7 +15,13 @@ const { Client } = require('pg');
 
 function makeResolveVoieHandler() {
   return async function resolveVoieHandler(req, res) {
-    const nom = (req.query.nom || '').trim();
+    const nomBrut = (req.query.nom || '').trim();
+
+    // Normaliser apostrophes typographiques Unicode vers ASCII
+    const nom = nomBrut
+      .replace(/\u2019/g, "'")  // ' RIGHT SINGLE QUOTATION MARK
+      .replace(/\u2018/g, "'")  // ' LEFT SINGLE QUOTATION MARK
+      .replace(/\u02BC/g, "'"); // ʼ MODIFIER LETTER APOSTROPHE
 
     if (!nom) {
       return res.status(400).json({
@@ -71,7 +77,7 @@ function makeResolveVoieHandler() {
       const row = result.rows[0];
 
       return res.status(200).json({
-        version: '1.8',
+        version: '1.9',
         status: 'OK',
         voie: {
           nom:         row.st_name,
