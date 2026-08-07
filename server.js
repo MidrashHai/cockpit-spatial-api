@@ -36,7 +36,7 @@ const express = require('express');
 const cors    = require('cors');
 const { Pool } = require('pg');
 const { compute } = require('./pcnt');
-const { makeResolveVoieHandler } = require('./resolve-voie');
+// resolve-voie chargé dynamiquement à chaque requête (évite le cache module)
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -165,7 +165,10 @@ app.post('/v1/resolve-presence', async (req, res) => {
 });
 
 // ── GET /v1/voie ───────────────────────────────────────────────
-app.get('/v1/voie', makeResolveVoieHandler(pool));
+app.get('/v1/voie', (req, res) => {
+  const { makeResolveVoieHandler } = require('./resolve-voie');
+  return makeResolveVoieHandler(pool)(req, res);
+});
 
 // ── GET /v1/info ───────────────────────────────────────────────
 app.get('/v1/info', (req, res) => {
