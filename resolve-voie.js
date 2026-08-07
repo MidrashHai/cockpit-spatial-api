@@ -4,15 +4,17 @@
 // McOmh.ai · CorreIA LLC · C-06
 //
 // ── Version ─────────────────────────────────────────────────────
-// v1.1 · 7 Août 2026 · 11:00 UTC
+// v1.2 · 7 Août 2026 · 11:30 UTC
 //
-// ── Correction appliquée ────────────────────────────────────────
-// La table shem_reference n'a pas de colonne "icl" — elle a "indice"
-// (integer = mishkan_index) et "famille" (MAKOM/SHAAR/MISHKAN).
-// La jointure se fait via mishkan_index_debut/fin → shem_reference.indice
-// et non via icl_debut/fin → shem_reference.icl (colonne inexistante).
-// C'était la vraie erreur depuis le début — masquée par un catch
-// qui affichait "relation voies does not exist" au lieu de l'erreur réelle.
+// ── Corrections appliquées ──────────────────────────────────────
+// v1.1 · Jointure shem_reference corrigée : icl → indice
+//        La table shem_reference n'a pas de colonne "icl" — elle a "indice"
+//        (integer = mishkan_index) et "famille" (MAKOM/SHAAR/MISHKAN).
+//        Jointure : mishkan_index_debut/fin → shem_reference.indice
+//        Erreur masquée par catch qui affichait "relation voies does not exist"
+//        au lieu de l'erreur réelle "column sd_m.icl does not exist".
+// v1.2 · Catch enrichi : retourne code + hint PostgreSQL pour diagnostic
+//        Permet d'identifier la vraie erreur depuis l'endpoint HTTP.
 
 'use strict';
 
@@ -123,9 +125,12 @@ function makeResolveVoieHandler(pool) {
 
     } catch (err) {
       console.error('[resolve-voie] Erreur DB:', err.message);
+      console.error('[resolve-voie] Stack:', err.stack);
       return res.status(500).json({
         error: 'Erreur serveur',
-        detail: err.message
+        detail: err.message,
+        code: err.code || null,
+        hint: err.hint || null
       });
     }
   };
