@@ -6,7 +6,7 @@
  * Compatible avec le stack SHC Governance Engine existant
  *
  * ── Version ────────────────────────────────────────────────────
- * v1.2 · 7 Août 2026 · 12:00 UTC
+ * v1.3 · 7 Août 2026 · 12:45 UTC
  *
  * ── Chantier actif ─────────────────────────────────────────────
  * C-06 · Endpoint GET /v1/voie · Carte maps.addressme.ci
@@ -166,6 +166,7 @@ app.post('/v1/resolve-presence', async (req, res) => {
 
 // ── GET /v1/voie ───────────────────────────────────────────────
 app.get('/v1/voie', (req, res) => {
+  delete require.cache[require.resolve('./resolve-voie')];
   const { makeResolveVoieHandler } = require('./resolve-voie');
   return makeResolveVoieHandler()(req, res);
 });
