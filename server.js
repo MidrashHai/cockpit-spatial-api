@@ -11,10 +11,18 @@
 require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
+const { Pool } = require('pg');
 const { compute } = require('./pcnt');
+const { makeResolveVoieHandler } = require('./resolve-voie');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
+
+// ── Connexion PostgreSQL ───────────────────────────────────────
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
 app.use(cors());
 app.use(express.json());
@@ -133,6 +141,9 @@ app.post('/v1/resolve-presence', async (req, res) => {
   return makeResolvePresenceHandler(compute)(req, res);
 });
 
+// ── GET /v1/voie ───────────────────────────────────────────────
+app.get('/v1/voie', makeResolveVoieHandler(pool));
+
 // ── GET /v1/info ───────────────────────────────────────────────
 app.get('/v1/info', (req, res) => {
   res.json({
@@ -144,6 +155,7 @@ app.get('/v1/info', (req, res) => {
       'POST /v1/territorial-context',
       'POST /v1/territorial-context/batch',
       'POST /v1/resolve-presence',
+      'GET  /v1/voie?nom=NOM_RUE',
       'GET  /v1/info',
       'GET  /health',
     ],
@@ -160,6 +172,7 @@ app.listen(PORT, () => {
   console.log('');
   console.log(`[SERVER] Port     : ${PORT}`);
   console.log(`[SERVER] Endpoint : POST /v1/territorial-context`);
+  console.log(`[SERVER] Endpoint : GET  /v1/voie`);
   console.log(`[SERVER] Health   : GET  /health`);
   console.log('');
 });
