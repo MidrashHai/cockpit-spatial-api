@@ -1,24 +1,18 @@
 // resolve-voie.js
-// Version     : v1.7
+// Version     : v1.8
 // Date        : 2026-08-08
-// Heure       : cycle suivant FL-715 · 7 Août 2026
-// Contexte    : Remplacement complet du Pool par pg.Client
-//               Connexion créée et détruite à chaque requête HTTP
-//               Aucune connexion persistante — Raqia avant la coupure
-//               16 tentatives pool épuisées (T-01 à T-16 · Note FL-715)
-//               JOIN canonique : shem_reference.indice + famille (Note Technique DB 6Aout2026)
+// Heure       : cycle C-06 · correction colonnes voies
+// Contexte    : v1.7 → 42703 "column v.mishkan_debut does not exist"
+//               Colonnes réelles vérifiées sur pod hn28j :
+//               mishkan_index_debut / mishkan_index_fin (pas mishkan_debut/fin)
+//               idx_makom_debut / idx_makom_fin (clé jointure shem_reference)
+//               pg.Client conservé (42P01 résolu en v1.7)
 // Auteur      : McOmh.ai · Makom Intelligence™ · CorreIA LLC
 
 'use strict';
 
 const { Client } = require('pg');
 
-/**
- * makeResolveVoieHandler()
- * Retourne le handler Express pour GET /v1/voie?nom=
- * Chaque appel HTTP crée un pg.Client frais, l'utilise, puis le détruit.
- * DATABASE_URL est lue à chaque requête depuis process.env — jamais figée.
- */
 function makeResolveVoieHandler() {
   return async function resolveVoieHandler(req, res) {
     const nom = (req.query.nom || '').trim();
@@ -30,7 +24,6 @@ function makeResolveVoieHandler() {
       });
     }
 
-    // Connexion fraîche — créée ici, détruite après la requête
     const client = new Client({
       connectionString: process.env.DATABASE_URL,
       ssl: { rejectUnauthorized: false }
@@ -38,8 +31,6 @@ function makeResolveVoieHandler() {
 
     try {
       await client.connect();
-
-      // SET explicite sur cette connexion neuve
       await client.query('SET search_path TO public');
 
       const sql = `
@@ -50,8 +41,8 @@ function makeResolveVoieHandler() {
           v.icl_fin,
           v.convergence,
           v.shem_rue,
-          v.mishkan_debut,
-          v.mishkan_fin,
+          v.mishkan_index_debut,
+          v.mishkan_index_fin,
           sm_d.shem_lat  AS shem_makom_debut_lat,
           sm_d.shem_heb  AS shem_makom_debut_heb,
           sm_d.shem_fr   AS shem_makom_debut_fr,
@@ -60,9 +51,9 @@ function makeResolveVoieHandler() {
           sm_f.shem_fr   AS shem_makom_fin_fr
         FROM public.voies v
         LEFT JOIN public.shem_reference sm_d
-          ON sm_d.indice = v.mishkan_debut AND sm_d.famille = 'MAKOM'
+          ON sm_d.indice = v.idx_makom_debut AND sm_d.famille = 'MAKOM'
         LEFT JOIN public.shem_reference sm_f
-          ON sm_f.indice = v.mishkan_fin   AND sm_f.famille = 'MAKOM'
+          ON sm_f.indice = v.idx_makom_fin   AND sm_f.famille = 'MAKOM'
         WHERE UPPER(v.st_name) = UPPER($1)
         LIMIT 1
       `;
@@ -73,14 +64,14 @@ function makeResolveVoieHandler() {
         return res.status(404).json({
           error: 'ERR_VOIE_NOT_FOUND',
           message: `Voie non trouvée : ${nom}`,
-          hint: 'Vérifier le nom exact (casse ignorée). Exemple : RUE TANO ATCHIMON'
+          hint: 'Vérifier le nom exact. Exemple : RUE TANO ATCHIMON'
         });
       }
 
       const row = result.rows[0];
 
       return res.status(200).json({
-        version: '1.7',
+        version: '1.8',
         status: 'OK',
         voie: {
           nom:         row.st_name,
@@ -105,7 +96,6 @@ function makeResolveVoieHandler() {
       });
 
     } catch (err) {
-      // Toujours exposer err.code + err.hint — loi extraite T-02 (faux message masquant)
       console.error('[resolve-voie] DB error:', err.code, err.message, err.hint || '');
       return res.status(500).json({
         error:   'ERR_DB',
@@ -114,7 +104,6 @@ function makeResolveVoieHandler() {
         message: err.message || 'Erreur base de données'
       });
     } finally {
-      // Destruction garantie — connexion ne survit pas à la requête
       try { await client.end(); } catch (_) {}
     }
   };
