@@ -21,7 +21,8 @@ const PORT = process.env.PORT || 3001;
 // ── Connexion PostgreSQL ───────────────────────────────────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  options: '-c search_path=public'
 });
 
 app.use(cors());
