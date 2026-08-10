@@ -1,32 +1,38 @@
 /**
- * Cockpit Spatial™ API · v1.1
+ * Cockpit Spatial™ API · v1.4
  * Makom Intelligence™ · CorreIA LLC
  *
  * Serveur Express · expose PCNT™ v3.1 comme endpoint REST
  * Compatible avec le stack SHC Governance Engine existant
  *
  * ── Version ────────────────────────────────────────────────────
- * v1.3 · 7 Août 2026 · 12:45 UTC
+ * v1.4 · 10 Août 2026 · 20:00 UTC
  *
  * ── Chantier actif ─────────────────────────────────────────────
- * C-06 · Endpoint GET /v1/voie · Carte maps.addressme.ci
+ * C-07 · Correction CORS · Autorisation appels navigateur (file:// + origins)
+ *        Contexte : le McOmH Territorial Desktop™ appelle l'API depuis un
+ *        fichier HTML local (file://) et depuis des origines tierces.
+ *        Sans header CORS explicite, le navigateur bloque la requête
+ *        malgré une réponse valide du serveur.
+ *        Solution : cors() configuré avec origin:'*' + preflight OPTIONS.
  *
  * ── Correction appliquée dans cette version ────────────────────
- * Problème : relation "voies" does not exist depuis le pool HTTP
- * Cause    : double injection de ?options= dans la connectionString
- *            — le code ajoutait ?options= ET la variable DATABASE_URL
- *            dans Render portait déjà ?options=-c%20search_path%3Dpublic
- *            → URL malformée → driver pg ne parsait plus le search_path
- * Solution : pool utilise process.env.DATABASE_URL directement,
- *            sans aucune modification dans le code.
- *            Le search_path est porté uniquement par la variable
- *            DATABASE_URL dans les Environment Variables Render :
- *            postgresql://...@.../mk_omhai?options=-c%20search_path%3Dpublic
+ * Problème : requêtes depuis le navigateur (file://, autres origines) bloquées
+ *            par le navigateur — CORS policy — malgré endpoint fonctionnel
+ * Cause    : app.use(cors()) sans configuration explicite ne retourne pas
+ *            les headers Access-Control-Allow-Origin sur toutes les origines
+ * Solution : cors({ origin: '*', methods: [...], allowedHeaders: [...] })
+ *            + app.options('*', cors()) pour le preflight OPTIONS
  *
  * ── Historique des versions ────────────────────────────────────
- * v1.0 · 6 Août 2026 · Déploiement initial · C-01 / C-02
+ * v1.0 · 6 Août 2026  · Déploiement initial · C-01 / C-02
  *        Endpoints : /health · /v1/territorial-context · /v1/resolve-presence
- * v1.1 · 7 Août 2026 · Ajout GET /v1/voie · fix search_path pool pg
+ * v1.1 · 7 Août 2026  · Ajout GET /v1/voie · fix search_path pool pg
+ * v1.2 · 7 Août 2026  · Bump version · ajustement gestion apostrophes
+ * v1.3 · 7 Août 2026  · Fix double injection ?options= DATABASE_URL
+ *        Cause    : double injection de ?options= dans la connectionString
+ *        Solution : pool utilise process.env.DATABASE_URL directement
+ * v1.4 · 10 Août 2026 · Correction CORS · C-07
  */
 
 'use strict';
@@ -36,7 +42,6 @@ const express = require('express');
 const cors    = require('cors');
 const { Pool } = require('pg');
 const { compute } = require('./pcnt');
-// resolve-voie chargé dynamiquement à chaque requête (évite le cache module)
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -47,7 +52,17 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-app.use(cors());
+// ── CORS · Autorisation navigateur ────────────────────────────
+// Requis pour les appels depuis file://, claude.ai, et tout origin
+// tiers accédant au McOmH Territorial Desktop™
+const corsOptions = {
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
 
 // ── GET /health ────────────────────────────────────────────────
@@ -56,7 +71,7 @@ app.get('/health', (req, res) => {
     status:    'ok',
     service:   'Cockpit Spatial™ API',
     protocol:  'PCNT-v3.1',
-    version:   '1.0.0',
+    version:   '1.4.0',
     timestamp: new Date().toISOString(),
   });
 });
@@ -178,6 +193,7 @@ app.get('/v1/info', (req, res) => {
     pcnt:      'v3.1',
     codex:     'Codex Shem haMakomot v3.1',
     publisher: 'Makom Intelligence™ · CorreIA LLC',
+    version:   '1.4.0',
     endpoints: [
       'POST /v1/territorial-context',
       'POST /v1/territorial-context/batch',
@@ -193,11 +209,12 @@ app.get('/v1/info', (req, res) => {
 app.listen(PORT, () => {
   console.log('');
   console.log('╔══════════════════════════════════════════════╗');
-  console.log('║   Cockpit Spatial™ API · v1.0               ║');
+  console.log('║   Cockpit Spatial™ API · v1.4               ║');
   console.log('║   PCNT™ v3.1 · Makom Intelligence™          ║');
   console.log('╚══════════════════════════════════════════════╝');
   console.log('');
   console.log(`[SERVER] Port     : ${PORT}`);
+  console.log(`[SERVER] CORS     : origin=* · preflight OPTIONS activé`);
   console.log(`[SERVER] Endpoint : POST /v1/territorial-context`);
   console.log(`[SERVER] Endpoint : GET  /v1/voie`);
   console.log(`[SERVER] Health   : GET  /health`);
