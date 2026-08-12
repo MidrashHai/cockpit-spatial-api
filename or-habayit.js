@@ -1,37 +1,25 @@
 /**
- * routes/or-habayit.js · v1.0
+ * or-habayit.js · v1.1
  * Makom Intelligence™ · CorreIA LLC
  *
  * Agent Or haBayit™ · Agent Territorial Conversationnel
  * Proxy Anthropic · OmeH.ai · Canal conversationnel Cocody
  *
  * ── Version ────────────────────────────────────────────────────
- * v1.0 · 12 Août 2026 · Chantier C-05 · Premier déploiement
+ * v1.1 · 12 Août 2026 · Chantier C-05 · Fix node-fetch
  *
  * ── Chantier actif ─────────────────────────────────────────────
  * C-05 · Proxy Or haBayit · Ouverture du Canal conversationnel
- *        Contexte : OmeH_ai_mobile_v2d.html appelle POST /v1/or-habayit
- *        avec { system, messages } et attend une réponse Anthropic standard.
- *        Ce fichier relaie la requête vers api.anthropic.com/v1/messages
- *        en injectant la clé depuis process.env.ANTHROPIC_API_KEY.
- *        Aucune clé n'est jamais transmise au navigateur (loi E-02).
  *
  * ── Correction appliquée dans cette version ────────────────────
- * v1.0 · Premier déploiement · pas de correction — création initiale
- *        Loi E-02 (Note_Transmission_FL715) : appel Anthropic depuis serveur
- *        uniquement · header anthropic-version obligatoire · model fixé à
- *        claude-sonnet-4-6 · max_tokens : 1024
- *
- * ── Lois canoniques appliquées ─────────────────────────────────
- * E-02 · Anthropic ne peut pas être appelé depuis le navigateur
- *        → ce proxy est l'unique point d'appel autorisé
- * E-05 · Or haBayit doit répondre sans Markdown · sans tirets longs
- *        → l'interdiction est inscrite dans le Corpus du Passage (côté frontend)
- * E-06 · ICL toujours au format LLLL espace pipe espace OOOO
- *        → inscrit dans le Corpus du Passage (côté frontend)
+ * v1.1 · Suppression de require('node-fetch') — module absent du projet
+ *        Node.js 24 dispose de fetch() natif (global)
+ *        Aucune dépendance externe requise pour ce fichier
  *
  * ── Historique des versions ────────────────────────────────────
- * v1.0 · 12 Août 2026 · Création · C-05 · Canal Or haBayit ouvert
+ * v1.0 · 12 Août 2026 · Création · C-05 · Canal Or haBayit
+ *        Erreur : require('node-fetch') — module non installé
+ * v1.1 · 12 Août 2026 · Fix · fetch() natif Node.js 24
  *
  * ── Usage ──────────────────────────────────────────────────────
  * POST /v1/or-habayit
@@ -40,8 +28,6 @@
  */
 
 'use strict';
-
-const fetch = require('node-fetch');
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL             = 'claude-sonnet-4-6';
@@ -73,7 +59,7 @@ module.exports = async function orHaBayit(req, res) {
       });
     }
 
-    // ── Appel Anthropic ───────────────────────────────────────
+    // ── Appel Anthropic · fetch natif Node.js 24 ─────────────
     const t0 = Date.now();
 
     const response = await fetch(ANTHROPIC_API_URL, {
