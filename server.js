@@ -1,25 +1,19 @@
 /**
- * Cockpit Spatial™ API · v1.5b
+ * Cockpit Spatial™ API · v1.6
  * Makom Intelligence™ · CorreIA LLC
  *
  * Serveur Express · expose PCNT™ v3.1 comme endpoint REST
  * Compatible avec le stack SHC Governance Engine existant
  *
  * ── Version ────────────────────────────────────────────────────
- * v1.5b · 12 Août 2026 · Chantier C-05 · Correction chemin or-habayit
+ * v1.6 · 12 Août 2026 · Chantier C-05 · Ajout POST /v1/auth
  *
  * ── Chantier actif ─────────────────────────────────────────────
- * C-05 · Proxy Or haBayit · Ouverture du Canal conversationnel
- *        Contexte : OmeH_ai_mobile_v2d.html appelle POST /v1/or-habayit
- *        pour relayer les messages vers l'API Anthropic (claude-sonnet-4-6).
- *        Sans ce proxy, Or haBayit est muet pour tous les habitants de Cocody.
- *        La clé ANTHROPIC_API_KEY reste côté serveur Render — jamais exposée
- *        dans le navigateur (loi E-02 · Note_Transmission_FL715).
- *
- * ── Correction appliquée dans cette version ────────────────────
- * v1.5b · or-habayit.js déposé à la racine du repo (pas dans routes/)
- *         Correction du chemin : require('./or-habayit') au lieu de
- *         require('./routes/or-habayit')
+ * C-05 · Auth acteurs · Inscription d'un habitant sur OmeH.ai
+ *        Contexte : POST /v1/auth génère person_id UUID + token_session
+ *        et insère l'acteur dans la table acteurs (mk_omhai).
+ *        Condition préalable à or-habayit v1.2 (enrichissement territorial
+ *        depuis la base · vérification token · injection ressources).
  *
  * ── Historique des versions ────────────────────────────────────
  * v1.0 · 6 Août 2026  · Déploiement initial · C-01 / C-02
@@ -33,11 +27,15 @@
  *        Cause    : requêtes navigateur bloquées — CORS policy
  *        Solution : cors({ origin: '*' }) + app.options('*', cors())
  * v1.5 · 12 Août 2026 · Proxy Or haBayit · C-05
- *        Ajout    : POST /v1/or-habayit → routes/or-habayit.js
+ *        Ajout    : POST /v1/or-habayit → or-habayit.js (racine)
  *        Effet    : Canal conversationnel OmeH.ai ouvert pour Cocody
  * v1.5b· 12 Août 2026 · Fix chemin · or-habayit.js à la racine du repo
  *        Cause    : fichier déposé à la racine, pas dans routes/
  *        Solution : require('./or-habayit') au lieu de require('./routes/or-habayit')
+ * v1.6 · 12 Août 2026 · Ajout POST /v1/auth · C-05 phase 2
+ *        Ajout    : POST /v1/auth → auth.js (racine)
+ *        Effet    : Inscription acteur · person_id UUID · token_session
+ *                   Table acteurs peuplée · condition de or-habayit v1.2
  */
 
 'use strict';
@@ -58,12 +56,10 @@ const pool = new Pool({
 });
 
 // ── CORS · Autorisation navigateur ────────────────────────────
-// Requis pour les appels depuis file://, claude.ai, et tout origin
-// tiers accédant au McOmH Territorial Desktop™
 const corsOptions = {
   origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-app-key']
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
@@ -76,7 +72,7 @@ app.get('/health', (req, res) => {
     status:    'ok',
     service:   'Cockpit Spatial™ API',
     protocol:  'PCNT-v3.1',
-    version:   '1.5b',
+    version:   '1.6',
     timestamp: new Date().toISOString(),
   });
 });
@@ -195,8 +191,13 @@ app.get('/v1/voie', (req, res) => {
 // Proxy Or haBayit · Agent Territorial Conversationnel
 // Relaie les messages vers l'API Anthropic (claude-sonnet-4-6)
 // La clé ANTHROPIC_API_KEY est lue depuis process.env · jamais exposée
-// Fichier or-habayit.js déposé à la racine du repo (pas dans routes/)
 app.post('/v1/or-habayit', require('./or-habayit'));
+
+// ── POST /v1/auth ──────────────────────────────────────────────
+// Inscription d'un acteur OmeH.ai
+// Génère person_id UUID + token_session · INSERT dans acteurs (mk_omhai)
+// Rôles acceptés : resident · visiteur · agent_territorial · mairie · admin
+app.post('/v1/auth', require('./auth'));
 
 // ── GET /v1/info ───────────────────────────────────────────────
 app.get('/v1/info', (req, res) => {
@@ -205,13 +206,14 @@ app.get('/v1/info', (req, res) => {
     pcnt:      'v3.1',
     codex:     'Codex Shem haMakomot v3.1',
     publisher: 'Makom Intelligence™ · CorreIA LLC',
-    version:   '1.5b',
+    version:   '1.6',
     endpoints: [
       'POST /v1/territorial-context',
       'POST /v1/territorial-context/batch',
       'POST /v1/resolve-presence',
       'GET  /v1/voie?nom=NOM_RUE',
       'POST /v1/or-habayit',
+      'POST /v1/auth',
       'GET  /v1/info',
       'GET  /health',
     ],
@@ -222,7 +224,7 @@ app.get('/v1/info', (req, res) => {
 app.listen(PORT, () => {
   console.log('');
   console.log('╔══════════════════════════════════════════════╗');
-  console.log('║   Cockpit Spatial™ API · v1.5b              ║');
+  console.log('║   Cockpit Spatial™ API · v1.6               ║');
   console.log('║   PCNT™ v3.1 · Makom Intelligence™          ║');
   console.log('╚══════════════════════════════════════════════╝');
   console.log('');
@@ -231,6 +233,7 @@ app.listen(PORT, () => {
   console.log(`[SERVER] Endpoint : POST /v1/territorial-context`);
   console.log(`[SERVER] Endpoint : GET  /v1/voie`);
   console.log(`[SERVER] Endpoint : POST /v1/or-habayit`);
+  console.log(`[SERVER] Endpoint : POST /v1/auth`);
   console.log(`[SERVER] Health   : GET  /health`);
   console.log('');
 });
