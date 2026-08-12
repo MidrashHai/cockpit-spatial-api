@@ -1,12 +1,12 @@
 /**
- * Cockpit Spatial™ API · v1.5
+ * Cockpit Spatial™ API · v1.5b
  * Makom Intelligence™ · CorreIA LLC
  *
  * Serveur Express · expose PCNT™ v3.1 comme endpoint REST
  * Compatible avec le stack SHC Governance Engine existant
  *
  * ── Version ────────────────────────────────────────────────────
- * v1.5 · 12 Août 2026 · Chantier C-05 · OmeH.ai Canal Or haBayit
+ * v1.5b · 12 Août 2026 · Chantier C-05 · Correction chemin or-habayit
  *
  * ── Chantier actif ─────────────────────────────────────────────
  * C-05 · Proxy Or haBayit · Ouverture du Canal conversationnel
@@ -17,9 +17,9 @@
  *        dans le navigateur (loi E-02 · Note_Transmission_FL715).
  *
  * ── Correction appliquée dans cette version ────────────────────
- * Ajout : app.post('/v1/or-habayit', require('./routes/or-habayit'))
- * Loi   : aucune clé API n'est exposée dans le navigateur
- * Loi   : le proxy lit ANTHROPIC_API_KEY depuis process.env (Render Environment)
+ * v1.5b · or-habayit.js déposé à la racine du repo (pas dans routes/)
+ *         Correction du chemin : require('./or-habayit') au lieu de
+ *         require('./routes/or-habayit')
  *
  * ── Historique des versions ────────────────────────────────────
  * v1.0 · 6 Août 2026  · Déploiement initial · C-01 / C-02
@@ -35,6 +35,9 @@
  * v1.5 · 12 Août 2026 · Proxy Or haBayit · C-05
  *        Ajout    : POST /v1/or-habayit → routes/or-habayit.js
  *        Effet    : Canal conversationnel OmeH.ai ouvert pour Cocody
+ * v1.5b· 12 Août 2026 · Fix chemin · or-habayit.js à la racine du repo
+ *        Cause    : fichier déposé à la racine, pas dans routes/
+ *        Solution : require('./or-habayit') au lieu de require('./routes/or-habayit')
  */
 
 'use strict';
@@ -73,7 +76,7 @@ app.get('/health', (req, res) => {
     status:    'ok',
     service:   'Cockpit Spatial™ API',
     protocol:  'PCNT-v3.1',
-    version:   '1.5.0',
+    version:   '1.5b',
     timestamp: new Date().toISOString(),
   });
 });
@@ -192,7 +195,8 @@ app.get('/v1/voie', (req, res) => {
 // Proxy Or haBayit · Agent Territorial Conversationnel
 // Relaie les messages vers l'API Anthropic (claude-sonnet-4-6)
 // La clé ANTHROPIC_API_KEY est lue depuis process.env · jamais exposée
-app.post('/v1/or-habayit', require('./routes/or-habayit'));
+// Fichier or-habayit.js déposé à la racine du repo (pas dans routes/)
+app.post('/v1/or-habayit', require('./or-habayit'));
 
 // ── GET /v1/info ───────────────────────────────────────────────
 app.get('/v1/info', (req, res) => {
@@ -201,7 +205,7 @@ app.get('/v1/info', (req, res) => {
     pcnt:      'v3.1',
     codex:     'Codex Shem haMakomot v3.1',
     publisher: 'Makom Intelligence™ · CorreIA LLC',
-    version:   '1.5.0',
+    version:   '1.5b',
     endpoints: [
       'POST /v1/territorial-context',
       'POST /v1/territorial-context/batch',
@@ -218,7 +222,7 @@ app.get('/v1/info', (req, res) => {
 app.listen(PORT, () => {
   console.log('');
   console.log('╔══════════════════════════════════════════════╗');
-  console.log('║   Cockpit Spatial™ API · v1.5               ║');
+  console.log('║   Cockpit Spatial™ API · v1.5b              ║');
   console.log('║   PCNT™ v3.1 · Makom Intelligence™          ║');
   console.log('╚══════════════════════════════════════════════╝');
   console.log('');
