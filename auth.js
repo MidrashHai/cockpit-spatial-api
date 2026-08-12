@@ -1,152 +1,241 @@
-// auth.js · v1.0 · 12 Aout 2026
-// POST /v1/auth · Inscription d'un acteur OmeH.ai
-// Makom Intelligence™ · CorreIA LLC · Scribe du Souffle
-// Pattern : pg.Client (fresh connection · search_path respecté)
-// Colonnes ciblées : person_id · nom · email · telephone · icl_residence · role · collectivite · token_session · token_expires · actif
+/**
+ * Cockpit Spatial™ API · v1.6
+ * Makom Intelligence™ · CorreIA LLC
+ *
+ * Serveur Express · expose PCNT™ v3.1 comme endpoint REST
+ * Compatible avec le stack SHC Governance Engine existant
+ *
+ * ── Version ────────────────────────────────────────────────────
+ * v1.6 · 12 Août 2026 · Chantier C-05 · Ajout POST /v1/auth
+ *
+ * ── Chantier actif ─────────────────────────────────────────────
+ * C-05 · Auth acteurs · Inscription d'un habitant sur OmeH.ai
+ *        Contexte : POST /v1/auth génère person_id UUID + token_session
+ *        et insère l'acteur dans la table acteurs (mk_omhai).
+ *        Condition préalable à or-habayit v1.2 (enrichissement territorial
+ *        depuis la base · vérification token · injection ressources).
+ *
+ * ── Historique des versions ────────────────────────────────────
+ * v1.0 · 6 Août 2026  · Déploiement initial · C-01 / C-02
+ *        Endpoints : /health · /v1/territorial-context · /v1/resolve-presence
+ * v1.1 · 7 Août 2026  · Ajout GET /v1/voie · fix search_path pool pg
+ * v1.2 · 7 Août 2026  · Bump version · ajustement gestion apostrophes
+ * v1.3 · 7 Août 2026  · Fix double injection ?options= DATABASE_URL
+ *        Cause    : double injection de ?options= dans la connectionString
+ *        Solution : pool utilise process.env.DATABASE_URL directement
+ * v1.4 · 10 Août 2026 · Correction CORS · C-07
+ *        Cause    : requêtes navigateur bloquées — CORS policy
+ *        Solution : cors({ origin: '*' }) + app.options('*', cors())
+ * v1.5 · 12 Août 2026 · Proxy Or haBayit · C-05
+ *        Ajout    : POST /v1/or-habayit → or-habayit.js (racine)
+ *        Effet    : Canal conversationnel OmeH.ai ouvert pour Cocody
+ * v1.5b· 12 Août 2026 · Fix chemin · or-habayit.js à la racine du repo
+ *        Cause    : fichier déposé à la racine, pas dans routes/
+ *        Solution : require('./or-habayit') au lieu de require('./routes/or-habayit')
+ * v1.6 · 12 Août 2026 · Ajout POST /v1/auth · C-05 phase 2
+ *        Ajout    : POST /v1/auth → auth.js (racine)
+ *        Effet    : Inscription acteur · person_id UUID · token_session
+ *                   Table acteurs peuplée · condition de or-habayit v1.2
+ */
 
 'use strict';
 
-const { Client } = require('pg');
-const crypto = require('crypto');
+require('dotenv').config();
+const express = require('express');
+const cors    = require('cors');
+const { Pool } = require('pg');
+const { compute } = require('./pcnt');
 
-// Rôles acceptés pour le pilote Cocody
-const ROLES_VALIDES = ['resident', 'visiteur', 'agent_territorial', 'mairie', 'admin'];
+const app  = express();
+const PORT = process.env.PORT || 3001;
 
-// Collectivité par défaut
-const COLLECTIVITE_DEFAUT = 'Mairie de Cocody';
+// ── Connexion PostgreSQL ───────────────────────────────────────
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
-module.exports = async function handleAuth(req, res) {
-  // ── 1 · Lecture et validation du corps ──────────────────────
-  const {
-    nom,
-    email,
-    telephone,
-    icl_residence,
-    role,
-    collectivite
-  } = req.body || {};
+// ── CORS · Autorisation navigateur ────────────────────────────
+const corsOptions = {
+  origin: '*',
+  methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-app-key']
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
-  // nom obligatoire
-  if (!nom || typeof nom !== 'string' || nom.trim().length === 0) {
+app.use(express.json());
+
+// ── GET /health ────────────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({
+    status:    'ok',
+    service:   'Cockpit Spatial™ API',
+    protocol:  'PCNT-v3.1',
+    version:   '1.6',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// ── POST /v1/territorial-context ──────────────────────────────
+app.post('/v1/territorial-context', (req, res) => {
+  const { latitude, longitude } = req.body;
+
+  if (latitude === undefined || longitude === undefined) {
     return res.status(400).json({
       error: {
-        code: 'ERR_NOM_REQUIS',
-        message: 'Le champ nom est obligatoire.'
+        code:     'ERR_BODY_INVALID',
+        message:  'latitude et longitude sont requis',
+        expected: '{ "latitude": float, "longitude": float }',
       }
     });
   }
 
-  // role : défaut 'resident' si absent · rejet si invalide
-  const roleFinal = (role || 'resident').toLowerCase().trim();
-  if (!ROLES_VALIDES.includes(roleFinal)) {
+  const lat = parseFloat(latitude);
+  const lon = parseFloat(longitude);
+
+  if (isNaN(lat) || lat < -90 || lat > 90) {
     return res.status(400).json({
       error: {
-        code: 'ERR_ROLE_INVALIDE',
-        message: `Rôle invalide : "${roleFinal}". Valeurs acceptées : ${ROLES_VALIDES.join(' · ')}`
+        code:     'ERR_LAT_RANGE',
+        message:  `latitude ${latitude} hors plage [-90, 90]`,
+        field:    'latitude',
+        received:  latitude,
+        expected: 'float dans [-90.0, 90.0]',
       }
     });
   }
 
-  // collectivite : défaut 'Mairie de Cocody'
-  const collectiviteFinal = (collectivite || COLLECTIVITE_DEFAUT).trim();
-
-  // ── 2 · Génération des identifiants ─────────────────────────
-  // person_id : UUID v4 sans tirets · 32 chars · tient dans varchar(64)
-  const person_id = crypto.randomUUID().replace(/-/g, '');
-
-  // token_session : hex 64 chars · tient dans varchar(128)
-  const token_session = crypto.randomBytes(32).toString('hex');
-
-  // token_expires : 30 jours à partir de maintenant
-  const token_expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-
-  // ── 3 · Insertion en base ───────────────────────────────────
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  if (isNaN(lon) || lon < -180 || lon > 180) {
+    return res.status(400).json({
+      error: {
+        code:     'ERR_LON_RANGE',
+        message:  `longitude ${longitude} hors plage [-180, 180]`,
+        field:    'longitude',
+        received:  longitude,
+        expected: 'float dans [-180.0, 180.0]',
+      }
+    });
+  }
 
   try {
-    await client.connect();
-
-    // Vérification de la base (loi canonique)
-    const check = await client.query('SELECT current_database()');
-    if (check.rows[0].current_database !== 'mk_omhai') {
-      await client.end();
-      return res.status(500).json({
-        error: {
-          code: 'ERR_MAUVAISE_BASE',
-          message: 'Mauvaise base de données connectée · attendu mk_omhai'
-        }
-      });
-    }
-
-    // Vérification email unique si fourni
-    if (email && email.trim().length > 0) {
-      const emailCheck = await client.query(
-        'SELECT id FROM public.acteurs WHERE email = $1 AND actif = true LIMIT 1',
-        [email.trim().toLowerCase()]
-      );
-      if (emailCheck.rows.length > 0) {
-        await client.end();
-        return res.status(409).json({
-          error: {
-            code: 'ERR_EMAIL_EXISTANT',
-            message: 'Un acteur avec cet email est déjà inscrit.'
-          }
-        });
-      }
-    }
-
-    // INSERT avec colonnes explicites (loi canonique · jamais de ... abrégé)
-    const result = await client.query(
-      `INSERT INTO public.acteurs
-        (person_id, nom, email, telephone, icl_residence, role, collectivite,
-         token_session, token_expires, actif, created_at, updated_at)
-       VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, now(), now())
-       RETURNING person_id, nom, email, telephone, icl_residence, role,
-                 collectivite, token_session, token_expires, actif, created_at`,
-      [
-        person_id,
-        nom.trim(),
-        email ? email.trim().toLowerCase() : null,
-        telephone ? telephone.trim() : null,
-        icl_residence ? icl_residence.trim() : null,
-        roleFinal,
-        collectiviteFinal,
-        token_session,
-        token_expires
-      ]
-    );
-
-    await client.end();
-
-    const acteur = result.rows[0];
-
-    // ── 4 · Réponse ─────────────────────────────────────────────
-    return res.status(201).json({
-      ok: true,
-      acteur: {
-        person_id: acteur.person_id,
-        nom: acteur.nom,
-        email: acteur.email,
-        telephone: acteur.telephone,
-        icl_residence: acteur.icl_residence,
-        role: acteur.role,
-        collectivite: acteur.collectivite,
-        token_session: acteur.token_session,
-        token_expires: acteur.token_expires,
-        actif: acteur.actif,
-        created_at: acteur.created_at
-      }
-    });
-
+    const t0      = Date.now();
+    const context = compute(lat, lon);
+    const ms      = Date.now() - t0;
+    return res.json({ ...context, computation_ms: ms });
   } catch (err) {
-    try { await client.end(); } catch (_) {}
-    console.error('[auth] Erreur DB :', err.message);
     return res.status(500).json({
-      error: {
-        code: 'ERR_DB',
-        message: 'Erreur base de données · ' + err.message
-      }
+      error: { code: 'ERR_COMPUTE', message: err.message }
     });
   }
-};
+});
+
+// ── POST /v1/territorial-context/batch ────────────────────────
+app.post('/v1/territorial-context/batch', (req, res) => {
+  const { locations } = req.body;
+
+  if (!Array.isArray(locations) || locations.length === 0) {
+    return res.status(400).json({
+      error: { code: 'ERR_BODY_INVALID', message: 'locations doit être un tableau non vide' }
+    });
+  }
+
+  const MAX = parseInt(process.env.NIM_MAX_BATCH) || 1000;
+  if (locations.length > MAX) {
+    return res.status(400).json({
+      error: { code: 'ERR_BATCH_SIZE', message: `batch limité à ${MAX} entrées` }
+    });
+  }
+
+  const t0      = Date.now();
+  const results = [];
+  let   success = 0;
+  let   errors  = 0;
+
+  for (const loc of locations) {
+    const lat = parseFloat(loc.latitude);
+    const lon = parseFloat(loc.longitude);
+    try {
+      const ctx = compute(lat, lon);
+      results.push({ id: loc.id || null, ...ctx });
+      success++;
+    } catch (err) {
+      results.push({ id: loc.id || null, status: 'ERROR', error: err.message });
+      errors++;
+    }
+  }
+
+  return res.json({
+    results,
+    total:          locations.length,
+    success,
+    errors,
+    computation_ms: Date.now() - t0,
+  });
+});
+
+// ── POST /v1/resolve-presence ──────────────────────────────────
+app.post('/v1/resolve-presence', async (req, res) => {
+  const { makeResolvePresenceHandler } = require('./resolve-presence');
+  return makeResolvePresenceHandler(compute)(req, res);
+});
+
+// ── GET /v1/voie ───────────────────────────────────────────────
+app.get('/v1/voie', (req, res) => {
+  delete require.cache[require.resolve('./resolve-voie')];
+  const { makeResolveVoieHandler } = require('./resolve-voie');
+  return makeResolveVoieHandler()(req, res);
+});
+
+// ── POST /v1/or-habayit ────────────────────────────────────────
+// Proxy Or haBayit · Agent Territorial Conversationnel
+// Relaie les messages vers l'API Anthropic (claude-sonnet-4-6)
+// La clé ANTHROPIC_API_KEY est lue depuis process.env · jamais exposée
+app.post('/v1/or-habayit', require('./or-habayit'));
+
+// ── POST /v1/auth ──────────────────────────────────────────────
+// Inscription d'un acteur OmeH.ai
+// Génère person_id UUID + token_session · INSERT dans acteurs (mk_omhai)
+// Rôles acceptés : resident · visiteur · agent_territorial · mairie · admin
+app.post('/v1/auth', require('./auth'));
+
+// ── GET /v1/info ───────────────────────────────────────────────
+app.get('/v1/info', (req, res) => {
+  res.json({
+    service:   'Cockpit Spatial™ API',
+    pcnt:      'v3.1',
+    codex:     'Codex Shem haMakomot v3.1',
+    publisher: 'Makom Intelligence™ · CorreIA LLC',
+    version:   '1.6',
+    endpoints: [
+      'POST /v1/territorial-context',
+      'POST /v1/territorial-context/batch',
+      'POST /v1/resolve-presence',
+      'GET  /v1/voie?nom=NOM_RUE',
+      'POST /v1/or-habayit',
+      'POST /v1/auth',
+      'GET  /v1/info',
+      'GET  /health',
+    ],
+  });
+});
+
+// ── DÉMARRAGE ─────────────────────────────────────────────────
+app.listen(PORT, () => {
+  console.log('');
+  console.log('╔══════════════════════════════════════════════╗');
+  console.log('║   Cockpit Spatial™ API · v1.6               ║');
+  console.log('║   PCNT™ v3.1 · Makom Intelligence™          ║');
+  console.log('╚══════════════════════════════════════════════╝');
+  console.log('');
+  console.log(`[SERVER] Port     : ${PORT}`);
+  console.log(`[SERVER] CORS     : origin=* · preflight OPTIONS activé`);
+  console.log(`[SERVER] Endpoint : POST /v1/territorial-context`);
+  console.log(`[SERVER] Endpoint : GET  /v1/voie`);
+  console.log(`[SERVER] Endpoint : POST /v1/or-habayit`);
+  console.log(`[SERVER] Endpoint : POST /v1/auth`);
+  console.log(`[SERVER] Health   : GET  /health`);
+  console.log('');
+});
+
+module.exports = app;
