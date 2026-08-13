@@ -1,19 +1,20 @@
 /**
- * Cockpit Spatial™ API · v1.6
+ * Cockpit Spatial™ API · v1.7
  * Makom Intelligence™ · CorreIA LLC
  *
  * Serveur Express · expose PCNT™ v3.1 comme endpoint REST
  * Compatible avec le stack SHC Governance Engine existant
  *
  * ── Version ────────────────────────────────────────────────────
- * v1.6 · 12 Août 2026 · Chantier C-05 · Ajout POST /v1/auth
+ * v1.7 · 13 Août 2026 · Chantier v2f · Ajout GET /v1/territoire + GET /v1/voiries
  *
  * ── Chantier actif ─────────────────────────────────────────────
- * C-05 · Auth acteurs · Inscription d'un habitant sur OmeH.ai
- *        Contexte : POST /v1/auth génère person_id UUID + token_session
- *        et insère l'acteur dans la table acteurs (mk_omhai).
- *        Condition préalable à or-habayit v1.2 (enrichissement territorial
- *        depuis la base · vérification token · injection ressources).
+ * v2f · Sol territorial mobile · Deux endpoints de chargement au démarrage
+ *       GET /v1/territoire → GeoJSON FeatureCollection · 6025 adresses PADA
+ *       GET /v1/voiries    → GeoJSON FeatureCollection · 386 voies
+ *       Condition préalable à OmeH_ai_mobile_v2f :
+ *       plusProcheAdresse() et plusProcheVoirie() opèrent dès le premier clic
+ *       Or haBayit cite la voie réelle dans BLOC 1 · DONNÉES INSTITUTIONNELLES PADA
  *
  * ── Historique des versions ────────────────────────────────────
  * v1.0 · 6 Août 2026  · Déploiement initial · C-01 / C-02
@@ -36,6 +37,12 @@
  *        Ajout    : POST /v1/auth → auth.js (racine)
  *        Effet    : Inscription acteur · person_id UUID · token_session
  *                   Table acteurs peuplée · condition de or-habayit v1.2
+ * v1.7 · 13 Août 2026 · Ajout GET /v1/territoire + GET /v1/voiries · v2f
+ *        Ajout    : GET /v1/territoire → territoire.js (racine)
+ *        Ajout    : GET /v1/voiries    → voiries.js (racine)
+ *        Effet    : Sol territorial disponible pour OmeH_ai_mobile_v2f
+ *                   initTerritoire() charge 6025 adresses + 386 voies au démarrage
+ *                   Or haBayit connaît la voie proche · BLOC 1 informatif complet
  */
 
 'use strict';
@@ -72,7 +79,7 @@ app.get('/health', (req, res) => {
     status:    'ok',
     service:   'Cockpit Spatial™ API',
     protocol:  'PCNT-v3.1',
-    version:   '1.6',
+    version:   '1.7',
     timestamp: new Date().toISOString(),
   });
 });
@@ -199,6 +206,18 @@ app.post('/v1/or-habayit', require('./or-habayit'));
 // Rôles acceptés : resident · visiteur · agent_territorial · mairie · admin
 app.post('/v1/auth', require('./auth'));
 
+// ── GET /v1/territoire ─────────────────────────────────────────
+// Sol computationnel territorial · 6025 adresses PADA · Cocody
+// GeoJSON FeatureCollection · chargé une fois au démarrage mobile (v2f)
+// Source : SELECT depuis public.territoire (mk_omhai · Frankfurt)
+app.get('/v1/territoire', require('./territoire'));
+
+// ── GET /v1/voiries ────────────────────────────────────────────
+// Réseau viaire territorial · 386 voies · Cocody
+// GeoJSON FeatureCollection · chargé une fois au démarrage mobile (v2f)
+// Source : SELECT depuis public.voies (mk_omhai · Frankfurt)
+app.get('/v1/voiries', require('./voiries'));
+
 // ── GET /v1/info ───────────────────────────────────────────────
 app.get('/v1/info', (req, res) => {
   res.json({
@@ -206,7 +225,7 @@ app.get('/v1/info', (req, res) => {
     pcnt:      'v3.1',
     codex:     'Codex Shem haMakomot v3.1',
     publisher: 'Makom Intelligence™ · CorreIA LLC',
-    version:   '1.6',
+    version:   '1.7',
     endpoints: [
       'POST /v1/territorial-context',
       'POST /v1/territorial-context/batch',
@@ -214,6 +233,8 @@ app.get('/v1/info', (req, res) => {
       'GET  /v1/voie?nom=NOM_RUE',
       'POST /v1/or-habayit',
       'POST /v1/auth',
+      'GET  /v1/territoire',
+      'GET  /v1/voiries',
       'GET  /v1/info',
       'GET  /health',
     ],
@@ -224,7 +245,7 @@ app.get('/v1/info', (req, res) => {
 app.listen(PORT, () => {
   console.log('');
   console.log('╔══════════════════════════════════════════════╗');
-  console.log('║   Cockpit Spatial™ API · v1.6               ║');
+  console.log('║   Cockpit Spatial™ API · v1.7               ║');
   console.log('║   PCNT™ v3.1 · Makom Intelligence™          ║');
   console.log('╚══════════════════════════════════════════════╝');
   console.log('');
@@ -234,6 +255,8 @@ app.listen(PORT, () => {
   console.log(`[SERVER] Endpoint : GET  /v1/voie`);
   console.log(`[SERVER] Endpoint : POST /v1/or-habayit`);
   console.log(`[SERVER] Endpoint : POST /v1/auth`);
+  console.log(`[SERVER] Endpoint : GET  /v1/territoire`);
+  console.log(`[SERVER] Endpoint : GET  /v1/voiries`);
   console.log(`[SERVER] Health   : GET  /health`);
   console.log('');
 });
