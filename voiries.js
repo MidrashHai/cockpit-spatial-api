@@ -1,9 +1,11 @@
-// voiries.js · v1.0 · 13 Août 2026
+// voiries.js · v1.1 · 13 Août 2026
 // Makom Intelligence™ · CorreIA LLC · Scribe du Souffle
 // Route : GET /v1/voiries
-// Source : SELECT depuis public.voies · 386 voies · Cocody · mk_omhai
-// Retourne : GeoJSON FeatureCollection · chargé une fois au démarrage mobile
-// Loi : le sol vient de la base · jamais de données embarquées dans le HTML mobile
+// Colonnes réelles : st_name, city, longueur_m, icl_debut, icl_fin,
+//                   lat_debut, lon_debut, lat_fin, lon_fin,
+//                   mishkan_index_debut, convergence
+// Source : public.voies · 386 voies · Cocody · mk_omhai
+// Note : shem_fr / mishkan_fr absents de voies · non sélectionnés
 
 const { Client } = require('pg');
 
@@ -14,16 +16,19 @@ module.exports = async (req, res) => {
   });
   try {
     await client.connect();
-
     const result = await client.query(
       `SELECT
          st_name,
+         city,
          longueur_m,
-         shem_fr,
-         shem_heb,
-         mishkan_fr,
-         convergence,
-         ST_AsGeoJSON(geom)::json AS geom
+         icl_debut,
+         icl_fin,
+         lat_debut,
+         lon_debut,
+         lat_fin,
+         lon_fin,
+         mishkan_index_debut,
+         convergence
        FROM public.voies`
     );
     await client.end();
@@ -31,14 +36,21 @@ module.exports = async (req, res) => {
     const features = result.rows.map(r => ({
       type: 'Feature',
       properties: {
-        st_name:    r.st_name,
-        longueur_m: r.longueur_m,
-        shem_fr:    r.shem_fr,
-        shem_heb:   r.shem_heb,
-        mishkan_fr: r.mishkan_fr,
-        convergence: r.convergence
+        st_name:             r.st_name,
+        city:                r.city,
+        longueur_m:          r.longueur_m,
+        icl_debut:           r.icl_debut,
+        icl_fin:             r.icl_fin,
+        mishkan_index_debut: r.mishkan_index_debut,
+        convergence:         r.convergence
       },
-      geometry: r.geom
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [parseFloat(r.lon_debut), parseFloat(r.lat_debut)],
+          [parseFloat(r.lon_fin),   parseFloat(r.lat_fin)]
+        ]
+      }
     }));
 
     res.json({ type: 'FeatureCollection', features });
