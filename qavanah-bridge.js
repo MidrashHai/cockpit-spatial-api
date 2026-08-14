@@ -1,35 +1,50 @@
 /**
  * qavanah-bridge.js
  * Makom Intelligence™ · CorreIA LLC
- * Version : 1.0.0
+ * Version : 1.0.1
  * Date : 2026-08-14
+ * FIX : suppression require('uuid') · parser TAL robuste
  *
  * Pont entre cockpit-spatial-api (Or haBayit™) et QAVANAH API™
- *
- * Responsabilités :
- * 1 · Extraire l'action TAL depuis la réponse texte d'Or haBayit™
- * 2 · Construire le payload Qavanah depuis le contexte de la requête
- * 3 · Appeler POST /v1/qavanah/check
- * 4 · Retourner la décision enrichie
- *
  * Loi E-02 : jamais appelé depuis le frontend · côté serveur uniquement
  * Loi Fallback : si Qavanah injoignable → continuer en mode dégradé gracieux
- * Mode actuel : OBSERVE · Qavanah conseille · Or haBayit continue dans tous les cas
  */
 
 'use strict';
 
 const https = require('https');
 const http  = require('http');
-// uuid non requis · ID générés depuis Date.now()
+
+// ─── ID GENERATOR · sans uuid ────────────────────────────────────────────────
 function generateBridgeId(prefix) {
   const ts = Date.now().toString(36).toUpperCase();
   const rd = Math.random().toString(36).substring(2, 6).toUpperCase();
   return `${prefix}-${ts}${rd}`;
 }
 
-// ─── EXTRACTION TAL ──────────────────────────────────────────────────────────
-// Extrait le bloc <TAL>{...}</TAL> depuis le texte libre d'Or haBayit™
+// ─── EXTRACTION TAL · ROBUSTE ─────────────────────────────────────────────────
+// Tente de réparer le JSON avant d'abandonner
+// Gère : clés sans guillemets · virgules trailing · apostrophes
+
+function repairJSON(raw) {
+  try {
+    // Tentative directe
+    return JSON.parse(raw);
+  } catch {}
+
+  try {
+    // Ajouter guillemets autour des clés sans guillemets
+    // {action:"SEARCH_PLACE"} → {"action":"SEARCH_PLACE"}
+    const repaired = raw
+      .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')
+      .replace(/:\s*'([^']*)'/g, ': "$1"')   // apostrophes → guillemets
+      .replace(/,\s*}/g, '}')                 // trailing comma
+      .replace(/,\s*]/g, ']');               // trailing comma array
+    return JSON.parse(repaired);
+  } catch {}
+
+  return null;
+}
 
 function extractTAL(text) {
   if (!text) return null;
@@ -37,23 +52,24 @@ function extractTAL(text) {
   const match = text.match(/<TAL>([\s\S]*?)<\/TAL>/);
   if (!match) return null;
 
-  try {
-    const action = JSON.parse(match[1].trim());
-    return {
-      raw:    match[1].trim(),
-      action: normalizeAction(action)
-    };
-  } catch (e) {
-    console.error('[QAVANAH-BRIDGE] Erreur parse TAL :', e.message);
+  const raw    = match[1].trim();
+  const action = repairJSON(raw);
+
+  if (!action) {
+    console.error('[QAVANAH-BRIDGE] Erreur parse TAL (non réparable) :', raw.substring(0, 80));
     return null;
   }
+
+  return {
+    raw,
+    action: normalizeAction(action)
+  };
 }
 
-// Normalise l'action TAL vers le format Qavanah
+// ─── NORMALISATION ACTION TAL → FORMAT QAVANAH ───────────────────────────────
 function normalizeAction(talAction) {
   if (!talAction) return null;
 
-  // Mapping format TAL → format Qavanah
   const typeMap = {
     'SEARCH_PLACE':    'SEARCH_PLACE',
     'SEARCH_ROAD':     'SEARCH_PLACE',
@@ -69,7 +85,7 @@ function normalizeAction(talAction) {
     'SEARCH_NUMBER':  'SEARCH_NUMBER',
   };
 
-  const type = typeMap[talAction.action] || talAction.action;
+  const type       = typeMap[talAction.action] || talAction.action;
   const parameters = {};
 
   if (talAction.query)     parameters.query     = talAction.query;
@@ -87,7 +103,6 @@ function normalizeAction(talAction) {
 }
 
 // ─── APPEL QAVANAH ───────────────────────────────────────────────────────────
-
 function callQavanah(qavanah_url, payload, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
     try {
@@ -132,24 +147,14 @@ function callQavanah(qavanah_url, payload, timeoutMs = 5000) {
 
 // ─── INTERFACE PRINCIPALE ────────────────────────────────────────────────────
 
-/**
- * checkWithQavanah
- * Extraire l'action TAL · appeler Qavanah · retourner la décision enrichie
- *
- * @param {string} responseText  - texte brut d'Or haBayit™
- * @param {object} context       - contexte de la requête (icl, sessionId, etc.)
- * @param {string} qavanah_url   - URL de QAVANAH API™ (depuis env QAVANAH_API_URL)
- * @returns {object}             - { talExtracted, decision, enrichedResponse }
- */
 async function checkWithQavanah(responseText, context, qavanah_url) {
 
-  // Résultat par défaut (mode dégradé gracieux si Qavanah injoignable)
   const defaultResult = {
-    qavanah_active:  false,
-    decision:        'ALLOW',
-    mode:            'DEGRADED',
-    note:            'Qavanah non joignable · mode dégradé gracieux',
-    talExtracted:    null
+    qavanah_active: false,
+    decision:       'ALLOW',
+    mode:           'DEGRADED',
+    note:           'Qavanah non joignable · mode dégradé gracieux',
+    talExtracted:   null
   };
 
   if (!qavanah_url) {
@@ -160,7 +165,6 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
   const talResult = extractTAL(responseText);
 
   if (!talResult) {
-    // Pas d'action TAL dans la réponse → texte conversationnel pur → ALLOW implicite
     return {
       qavanah_active: true,
       decision:       'ALLOW',
@@ -181,10 +185,10 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
       contractId: `IC-OHB-${sessionId}`,
       version:    1,
       source:     'USER_CONFIRMED',
-      scope:      null  // Or haBayit™ détermine le scope dynamiquement
+      scope:      null
     },
     context: {
-      contextId: `CTX-OHB-${Date.now().toString(36).toUpperCase()}`,
+      contextId: generateBridgeId('CTX'),
       icl,
       place:   context.place   || {},
       state:   context.state   || {},
@@ -196,7 +200,7 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
       step:  context.step || 1
     },
     action: {
-      id:         `ACT-OHB-${Date.now().toString(36).toUpperCase()}`,
+      id:         generateBridgeId('ACT'),
       type:       talResult.action.type,
       parameters: talResult.action.parameters
     }
@@ -210,8 +214,8 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
 
     return {
       qavanah_active: true,
-      decision:       qavanah_decision.decision,        // ALLOW | ADJUST | BLOCK
-      mode:           qavanah_decision.mode,            // OBSERVE
+      decision:       qavanah_decision.decision,
+      mode:           qavanah_decision.mode,
       trajectoryId,
       checkId:        qavanah_decision.checkId,
       action:         talResult.action,
@@ -225,7 +229,6 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
     };
 
   } catch (err) {
-    // Fallback gracieux : Qavanah injoignable → continuer sans bloquer
     console.error('[QAVANAH-BRIDGE] Erreur :', err.message);
     return {
       ...defaultResult,
@@ -234,7 +237,7 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
       mode:           'DEGRADED',
       talExtracted:   talResult,
       error:          err.message,
-      note:           `Qavanah injoignable (${err.message}) · mode dégradé · action autorisée par défaut`
+      note:           `Qavanah injoignable (${err.message}) · mode dégradé`
     };
   }
 }
@@ -246,28 +249,22 @@ function buildNote(decision) {
   return 'UNKNOWN';
 }
 
-// ─── ENRICHISSEMENT DE LA RÉPONSE ────────────────────────────────────────────
-// Enrichit la réponse Or haBayit™ avec la décision Qavanah
-// Le format texte + TAL reste inchangé pour le frontend
-
+// ─── ENRICHISSEMENT ──────────────────────────────────────────────────────────
 function enrichResponse(claudeResponse, qavResult) {
   if (!claudeResponse || !claudeResponse.content) return claudeResponse;
-
-  // En mode OBSERVE : la décision est ajoutée comme métadonnée
-  // Le texte et le bloc TAL restent intacts pour le frontend
   return {
     ...claudeResponse,
     qavanah: {
-      active:      qavResult.qavanah_active,
-      decision:    qavResult.decision,
-      mode:        qavResult.mode,
-      checkId:     qavResult.checkId     || null,
-      trajectoryId:qavResult.trajectoryId || null,
-      action:      qavResult.action      || null,
-      alignment:   qavResult.alignment   || null,
-      drift:       qavResult.drift       || null,
-      reasonCodes: qavResult.reasonCodes || [],
-      note:        qavResult.note        || null
+      active:       qavResult.qavanah_active,
+      decision:     qavResult.decision,
+      mode:         qavResult.mode,
+      checkId:      qavResult.checkId      || null,
+      trajectoryId: qavResult.trajectoryId || null,
+      action:       qavResult.action       || null,
+      alignment:    qavResult.alignment    || null,
+      drift:        qavResult.drift        || null,
+      reasonCodes:  qavResult.reasonCodes  || [],
+      note:         qavResult.note         || null
     }
   };
 }
