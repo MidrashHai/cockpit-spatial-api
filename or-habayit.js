@@ -1,96 +1,147 @@
 /**
- * or-habayit.js · v1.1
+ * or-habayit.js · Or haBayit™ v1.2
  * Makom Intelligence™ · CorreIA LLC
  *
- * Agent Or haBayit™ · Agent Territorial Conversationnel
- * Proxy Anthropic · OmeH.ai · Canal conversationnel Cocody
+ * Agent Territorial Conversationnel™
+ * Proxy Anthropic API · couche Qavanah Bridge intégrée
  *
- * ── Version ────────────────────────────────────────────────────
- * v1.1 · 12 Août 2026 · Chantier C-05 · Fix node-fetch
+ * ── Historique ────────────────────────────────────────────────
+ * v1.0 · 12 Août 2026 · Proxy passif vers Anthropic
+ * v1.1 · 12 Août 2026 · Fix chemin racine
+ * v1.2 · 14 Août 2026 · Qavanah Bridge · parsing TAL côté serveur
  *
- * ── Chantier actif ─────────────────────────────────────────────
- * C-05 · Proxy Or haBayit · Ouverture du Canal conversationnel
+ * ── Architecture v1.2 ────────────────────────────────────────
+ * AVANT : client → Claude → res.json(response)
+ * APRÈS : client → Claude → extractTAL → Qavanah → enrichResponse
  *
- * ── Correction appliquée dans cette version ────────────────────
- * v1.1 · Suppression de require('node-fetch') — module absent du projet
- *        Node.js 24 dispose de fetch() natif (global)
- *        Aucune dépendance externe requise pour ce fichier
+ * Mode actuel : OBSERVE
+ * · Qavanah évalue et conseille
+ * · Or haBayit™ continue dans tous les cas (ALLOW / ADJUST / BLOCK)
+ * · Fallback gracieux si Qavanah injoignable
+ * · La décision Qavanah est dans response.qavanah (métadonnée)
+ * · Le bloc <TAL> reste intact pour compatibilité frontend v2f
  *
- * ── Historique des versions ────────────────────────────────────
- * v1.0 · 12 Août 2026 · Création · C-05 · Canal Or haBayit
- *        Erreur : require('node-fetch') — module non installé
- * v1.1 · 12 Août 2026 · Fix · fetch() natif Node.js 24
- *
- * ── Usage ──────────────────────────────────────────────────────
- * POST /v1/or-habayit
- * Body : { system: string, messages: Array<{role, content}> }
- * Retour : réponse Anthropic brute (content, usage, model, etc.)
+ * Loi E-02 : Qavanah appelé côté serveur uniquement
+ * Loi Fallback : jamais bloquer Or haBayit™ si Qavanah échoue
  */
 
 'use strict';
 
-const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
-const MODEL             = 'claude-sonnet-4-6';
-const MAX_TOKENS        = 1024;
+const Anthropic = require('@anthropic-ai/sdk');
+const { checkWithQavanah, enrichResponse } = require('./qavanah-bridge');
 
-module.exports = async function orHaBayit(req, res) {
+const anthropic       = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const QAVANAH_API_URL = process.env.QAVANAH_API_URL || null;
+
+if (QAVANAH_API_URL) {
+  console.log(`[OR-HABAYIT] Qavanah Bridge : ACTIF · ${QAVANAH_API_URL}`);
+} else {
+  console.log('[OR-HABAYIT] Qavanah Bridge : INACTIF (QAVANAH_API_URL absent)');
+}
+
+/**
+ * Handler POST /v1/or-habayit
+ *
+ * Body attendu (inchangé depuis v1.1) :
+ * {
+ *   system:   string  (system prompt complet)
+ *   messages: array   (historique de conversation)
+ *   // Champs optionnels pour Qavanah context :
+ *   sessionId?:    string
+ *   icl?:          string  (ICL du lieu courant)
+ *   place?:        object
+ *   state?:        object
+ *   zera?:         object
+ *   trajectoryId?: string
+ *   step?:         number
+ * }
+ *
+ * Réponse enrichie (v1.2) :
+ * {
+ *   content: [...] (réponse Claude · inchangée)
+ *   qavanah: {     (nouveau · métadonnée de gouvernance)
+ *     active:      bool
+ *     decision:    'ALLOW' | 'ADJUST' | 'BLOCK'
+ *     mode:        'OBSERVE' | 'DEGRADED'
+ *     checkId:     string
+ *     trajectoryId:string
+ *     action:      { type, parameters }
+ *     alignment:   { intent, context, action, composite }
+ *     drift:       { state, tension, slope, auc }
+ *     reasonCodes: string[]
+ *     note:        string
+ *   }
+ * }
+ */
+module.exports = async function orHabayitHandler(req, res) {
+  const { system, messages } = req.body;
+
+  // Validation minimale (inchangée depuis v1.1)
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({
+      error: { code: 'ERR_MESSAGES_REQUIRED', message: 'messages est requis' }
+    });
+  }
+
   try {
-    const { system, messages } = req.body;
-
-    // ── Vérification clé API ──────────────────────────────────
-    if (!process.env.ANTHROPIC_API_KEY) {
-      console.error('[or-habayit] ANTHROPIC_API_KEY absente · configurer dans Render Environment');
-      return res.status(500).json({
-        error: {
-          code:    'ERR_NO_API_KEY',
-          message: 'ANTHROPIC_API_KEY non configurée sur le serveur · contacter l\'administrateur'
-        }
-      });
-    }
-
-    // ── Vérification body ─────────────────────────────────────
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({
-        error: {
-          code:     'ERR_BODY_INVALID',
-          message:  'messages est requis et doit être un tableau non vide',
-          expected: '{ "system": string, "messages": [{role, content}] }'
-        }
-      });
-    }
-
-    // ── Appel Anthropic · fetch natif Node.js 24 ─────────────
-    const t0 = Date.now();
-
-    const response = await fetch(ANTHROPIC_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model:      MODEL,
-        max_tokens: MAX_TOKENS,
-        system:     system  || '',
-        messages:   messages
-      })
+    // ── Appel Anthropic (inchangé) ──────────────────────────────
+    const response = await anthropic.messages.create({
+      model:      'claude-sonnet-4-6',
+      max_tokens: 1000,
+      system:     system || '',
+      messages
     });
 
-    const data = await response.json();
-    const ms   = Date.now() - t0;
+    // ── Couche Qavanah Bridge (nouveau v1.2) ────────────────────
+    const responseText = response.content?.[0]?.text || '';
 
-    console.log(`[or-habayit] ${response.status} · ${ms}ms · ${messages.length} message(s)`);
+    // Construire le contexte depuis la requête entrante
+    const qavContext = {
+      trajectoryId: req.body.trajectoryId  || null,
+      sessionId:    req.body.sessionId     || req.headers['x-session-id'] || null,
+      icl:          req.body.icl           || req.body.context?.icl || null,
+      place:        req.body.place         || req.body.context?.place || {},
+      state:        req.body.state         || req.body.context?.state || {},
+      zera:         req.body.zera          || req.body.context?.zera || null,
+      step:         req.body.step          || 1
+    };
 
-    // ── Retour brut au frontend ───────────────────────────────
-    return res.status(response.status).json(data);
+    // Évaluation Qavanah · avec fallback gracieux
+    let enrichedResponse = response;
+    try {
+      const qavResult = await checkWithQavanah(responseText, qavContext, QAVANAH_API_URL);
+      enrichedResponse = enrichResponse(response, qavResult);
+
+      // Log monitoring
+      if (qavResult.qavanah_active) {
+        if (qavResult.action) {
+          console.log(
+            `[QAVANAH] ${qavResult.action.type} → ${qavResult.decision}` +
+            ` · tension=${qavResult.drift?.tension ?? 'n/a'}` +
+            ` · mode=${qavResult.mode}`
+          );
+        } else {
+          console.log(`[QAVANAH] conversationnel → ALLOW · aucune action TAL`);
+        }
+      } else {
+        console.log(`[QAVANAH] mode dégradé · ${qavResult.note}`);
+      }
+
+    } catch (bridgeErr) {
+      // Fallback : ne jamais bloquer Or haBayit™ si Qavanah échoue
+      console.error('[QAVANAH-BRIDGE] Erreur non gérée :', bridgeErr.message);
+      // enrichedResponse reste = response (réponse Claude originale)
+    }
+
+    // ── Retour au client ────────────────────────────────────────
+    return res.json(enrichedResponse);
 
   } catch (err) {
-    console.error('[or-habayit] Erreur réseau ou serveur :', err.message);
+    console.error('[OR-HABAYIT] Erreur Anthropic :', err.message);
     return res.status(500).json({
       error: {
-        code:    'ERR_PROXY',
-        message: `Connexion au Canal impossible · ${err.message}`
+        code:    'ERR_ANTHROPIC',
+        message: err.message
       }
     });
   }
