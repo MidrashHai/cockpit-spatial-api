@@ -21,7 +21,12 @@
 
 const https = require('https');
 const http  = require('http');
-const { v4: uuidv4 } = require ? require('uuid') : { v4: () => `trj-${Date.now()}` };
+// uuid non requis · ID générés depuis Date.now()
+function generateBridgeId(prefix) {
+  const ts = Date.now().toString(36).toUpperCase();
+  const rd = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `${prefix}-${ts}${rd}`;
+}
 
 // ─── EXTRACTION TAL ──────────────────────────────────────────────────────────
 // Extrait le bloc <TAL>{...}</TAL> depuis le texte libre d'Or haBayit™
