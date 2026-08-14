@@ -1,31 +1,39 @@
 /**
  * qavanah-bridge.js
  * Makom Intelligence™ · CorreIA LLC
- * Version : 2.2.0
+ * Version : 2.2.1
  * Date    : 2026-08-14
  *
- * CHANGEMENTS v2.2.0 · Priority 3 · Pipeline Bereshit 1:3
- *   · action.sequence_id transmis dans action (et non seulement dans intent)
- *   · action.step_id transmis = type de l'action TAL normalisé
- *   · Qavanah peut maintenant activer MOD-086 + MOD-025 :
- *       MOD-086 : charger SEQ-* depuis PostgreSQL
- *       MOD-025 : vérifier la transition current_state → step_id
- *   · qavanah.sequence retourné dans la réponse enrichie
+ * CHANGEMENTS v2.2.1 · Correction step_id
+ *   · step_id = position dans la séquence · pas l'action TAL
+ *   · SEARCH_PLACE (tal_action) → step_id: "OR_HABAYIT" (étape séquence)
+ *   · Toutes les actions cartographiques aboutissent à OR_HABAYIT
+ *     dans SEQ-TERRITOIRE-001 · step_id corrigé en conséquence
+ *   · SEARCH_NUMBER → step_id: "OR_HABAYIT" dans SEQ-ADRESSE-001
+ *   · START_GPS → step_id: "CONTEXTE_DISPONIBLE" dans SEQ-FALLBACK-001
+ *   · SHOW/HIDE_LAYER → step_id: "ACTIONS" dans SEQ-ARCHITECTURE-001
+ *
+ * Loi step_id :
+ *   step_id = où Or haBayit en est dans la séquence
+ *   type    = ce que Or haBayit fait (action TAL)
+ *   Ces deux valeurs sont distinctes · jamais confondues
+ *
+ * CHANGEMENTS v2.2.0
+ *   · action.sequence_id + action.step_id dans le payload
+ *   · Pipeline Bereshit 1:3 activé : MOD-086 + MOD-025
  *
  * CHANGEMENTS v2.1.0
- *   · fetchZera() : appel GET /v1/zera/:icl → qavanah-api
- *   · context.zera injecté depuis la graine réelle ZM-{icl}
+ *   · fetchZera() : GET /v1/zera/:icl → contexte zera réel
  *
  * CHANGEMENTS v2.0.0
- *   · ACTION_HOQ_MAP : action TAL → hoq_id + sequence_id
- *   · Contexte enrichi : place + state résolus depuis ICL
- *   · intent.scope : hoq_id transmis à Qavanah
+ *   · ACTION_HOQ_MAP · context enrichi · intent.scope
  *
  * Pont entre cockpit-spatial-api (Or haBayit™) et QAVANAH API™
- * Loi E-02   : jamais appelé depuis le frontend · côté serveur uniquement
- * Loi Fallback : si Qavanah injoignable → continuer en mode dégradé gracieux
- * Loi Zera   : le Zera est un composant réel du contexte · pas un bonus de score
- * Loi HOQ    : chaque action TAL est liée à une séquence identifiée · jamais anonyme
+ * Loi E-02     : jamais appelé depuis le frontend
+ * Loi Fallback : Qavanah injoignable → mode dégradé gracieux
+ * Loi Zera     : composant réel du contexte · pas un bonus
+ * Loi HOQ      : chaque action TAL liée à une séquence · jamais anonyme
+ * Loi step_id  : position dans la séquence · pas l'action TAL
  */
 
 'use strict';
@@ -116,26 +124,51 @@ function normalizeAction(talAction) {
 
 // ─── MAPPING ACTION TAL → HOQ OMEH.AI ────────────────────────────────────────
 // Référence : OMEH-HOQ-MATRIX-002 · 17 Hoqim · Golden Dataset OmeH.ai v1.0
-// step_id = type de l'action TAL · correspond à l'étape dans la séquence
+//
+// Loi step_id (v2.2.1) :
+//   step_id = étape dans la séquence où Or haBayit se trouve
+//   type    = action TAL que Or haBayit exécute à cette étape
+//   Ces deux valeurs sont distinctes.
+//
+// SEQ-TERRITOIRE-001 états : START → LOAD_TERRITORY → LOAD_ROADS
+//                            → RESOLVE_NEAREST_ROAD → BUILD_CONTEXT → OR_HABAYIT
+//   Toutes les actions cartographiques se produisent à l'étape OR_HABAYIT
+//   step_id = "OR_HABAYIT" pour SEARCH_PLACE · FLY_TO · ZOOM_TO · etc.
+//
+// SEQ-ADRESSE-001 états : START → ADDRESSES_DATA → PLUS_PROCHE_ADRESSE
+//                         → RUE_NUMERO → INJECT_TERRITOIRE → OR_HABAYIT
+//   step_id = "OR_HABAYIT" pour SEARCH_NUMBER
+//
+// SEQ-FALLBACK-001 états : START → GPS_RESOLVE → API_CHECK
+//                          → ICL_API / ICL_LOCAL → CONTEXTE_DISPONIBLE
+//   step_id = "CONTEXTE_DISPONIBLE" pour START_GPS
+//
+// SEQ-ARCHITECTURE-001 états : START → TERRITORY → LIEUX → FICHIERS_TERRITORIAUX
+//                              → RESSOURCES → RELATIONS → INTERACTIONS → ACTIONS
+//   step_id = "ACTIONS" pour SHOW_LAYER · HIDE_LAYER
 
 const ACTION_HOQ_MAP = {
-  'SEARCH_PLACE':    { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'SEARCH_PLACE'    },
-  'SEARCH_NUMBER':   { hoq_id: 'OMEH-HOQ-012', sequence_id: 'SEQ-ADRESSE-001',      step_id: 'SEARCH_NUMBER'   },
-  'FLY_TO':          { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'FLY_TO'          },
-  'ZOOM_TO':         { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'ZOOM_TO'         },
-  'HIGHLIGHT_PLACE': { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'HIGHLIGHT_PLACE' },
-  'HIGHLIGHT_ROAD':  { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'HIGHLIGHT_ROAD'  },
-  'RESET_VIEW':      { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'RESET_VIEW'      },
-  'PLACE_MARKER':    { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'PLACE_MARKER'    },
-  'SHOW_LAYER':      { hoq_id: 'OMEH-HOQ-007', sequence_id: 'SEQ-ARCHITECTURE-001', step_id: 'SHOW_LAYER'      },
-  'HIDE_LAYER':      { hoq_id: 'OMEH-HOQ-007', sequence_id: 'SEQ-ARCHITECTURE-001', step_id: 'HIDE_LAYER'      },
-  'START_GPS':       { hoq_id: 'OMEH-HOQ-010', sequence_id: 'SEQ-FALLBACK-001',     step_id: 'START_GPS'       },
+  // Actions cartographiques → SEQ-TERRITOIRE-001 · étape finale OR_HABAYIT
+  'SEARCH_PLACE':    { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'OR_HABAYIT'         },
+  'FLY_TO':          { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'OR_HABAYIT'         },
+  'ZOOM_TO':         { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'OR_HABAYIT'         },
+  'HIGHLIGHT_PLACE': { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'OR_HABAYIT'         },
+  'HIGHLIGHT_ROAD':  { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'OR_HABAYIT'         },
+  'RESET_VIEW':      { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'OR_HABAYIT'         },
+  'PLACE_MARKER':    { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'OR_HABAYIT'         },
+  // Adresse → SEQ-ADRESSE-001 · étape finale OR_HABAYIT
+  'SEARCH_NUMBER':   { hoq_id: 'OMEH-HOQ-012', sequence_id: 'SEQ-ADRESSE-001',      step_id: 'OR_HABAYIT'         },
+  // Architecture → SEQ-ARCHITECTURE-001 · étape finale ACTIONS
+  'SHOW_LAYER':      { hoq_id: 'OMEH-HOQ-007', sequence_id: 'SEQ-ARCHITECTURE-001', step_id: 'ACTIONS'            },
+  'HIDE_LAYER':      { hoq_id: 'OMEH-HOQ-007', sequence_id: 'SEQ-ARCHITECTURE-001', step_id: 'ACTIONS'            },
+  // GPS → SEQ-FALLBACK-001 · étape finale CONTEXTE_DISPONIBLE
+  'START_GPS':       { hoq_id: 'OMEH-HOQ-010', sequence_id: 'SEQ-FALLBACK-001',     step_id: 'CONTEXTE_DISPONIBLE'},
 };
 
 const HOQ_DEFAULT = {
   hoq_id:      'OMEH-HOQ-001',
   sequence_id: 'SEQ-TERRITOIRE-001',
-  step_id:     'SEARCH_PLACE'
+  step_id:     'OR_HABAYIT'
 };
 
 // ─── RÉSOLUTION CONTEXTE TERRITORIAL ─────────────────────────────────────────
@@ -159,8 +192,8 @@ function resolveContextFromICL(icl) {
 }
 
 // ─── FETCH ZERA DEPUIS QAVANAH API ───────────────────────────────────────────
-// Appel GET /v1/zera/:icl · retourne le contexte zera normalisé
 // Loi Zera : composant réel du contexte · pas un bonus de score
+// ICL format "LLLL|OOOO" · pipe encodé %7C pour l'URL
 
 async function fetchZera(icl, qavanah_url, timeoutMs = 3000) {
   if (!icl || !qavanah_url) return null;
@@ -318,6 +351,7 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
   }
 
   // 2 · Résoudre HOQ + sequence_id + step_id depuis le type d'action TAL
+  //     step_id = étape dans la séquence (Loi v2.2.1)
   const hoqMapping  = ACTION_HOQ_MAP[talResult.action.type] || HOQ_DEFAULT;
 
   // 3 · Résoudre ICL et contexte territorial
@@ -325,17 +359,18 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
   const resolvedCtx = resolveContextFromICL(icl);
 
   // 4 · Charger le Zera réel depuis Qavanah API
+  // Priorité : zera fourni par l'appelant > zera chargé depuis ICL
   const zeraContext = context.zera || await fetchZera(icl, qavanah_url);
 
   // 5 · Construire identifiants
   const trajectoryId = context.trajectoryId || `TRJ-OHB-${Date.now().toString(36).toUpperCase()}`;
   const sessionId    = context.sessionId    || 'unknown-session';
 
-  // 6 · Construire le payload Qavanah complet · v2.2.0
+  // 6 · Construire le payload Qavanah complet
   // Pipeline Bereshit 1:3 :
-  //   MOD-247 : action.type vérifié dans catalogue
-  //   MOD-086 : action.sequence_id → charger contrat depuis PostgreSQL
-  //   MOD-025 : action.step_id → vérifier transition depuis current_state
+  //   MOD-247  : action.type vérifié dans catalogue
+  //   MOD-086  : action.sequence_id → charger contrat depuis PostgreSQL
+  //   MOD-025  : action.step_id → vérifier transition depuis current_state
   //   MOD-207a : context.icl → vérifier contexte territorial résolu
   const payload = {
     trajectoryId,
@@ -357,12 +392,11 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
       model: 'claude-sonnet-4-6',
       step:  context.step || 1
     },
-    // v2.2.0 · sequence_id + step_id dans action pour activer MOD-086 + MOD-025
     action: {
       id:          generateBridgeId('ACT'),
-      type:        talResult.action.type,
-      sequence_id: hoqMapping.sequence_id,   // ← MOD-086 charge ce contrat
-      step_id:     hoqMapping.step_id,       // ← MOD-025 vérifie cette transition
+      type:        talResult.action.type,       // ce que Or haBayit fait
+      sequence_id: hoqMapping.sequence_id,      // MOD-086 · quel contrat charger
+      step_id:     hoqMapping.step_id,          // MOD-025 · étape dans la séquence
       parameters:  talResult.action.parameters
     }
   };
@@ -398,7 +432,7 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
       talRaw:         talResult.raw,
       alignment:      qavanah_decision.alignment,
       drift:          qavanah_decision.drift,
-      sequence:       qavanah_decision.sequence || null,   // ← résultat MOD-086/025
+      sequence:       qavanah_decision.sequence || null,
       reasonCodes:    qavanah_decision.reasonCodes,
       evidence:       qavanah_decision.evidence,
       next:           qavanah_decision.next,
@@ -443,7 +477,7 @@ function enrichResponse(claudeResponse, qavResult) {
       zera_id:      qavResult.zera_id      || null,
       zera_version: qavResult.zera_version || null,
       action:       qavResult.action       || null,
-      sequence:     qavResult.sequence     || null,   // ← résultat pipeline
+      sequence:     qavResult.sequence     || null,
       alignment:    qavResult.alignment    || null,
       drift:        qavResult.drift        || null,
       reasonCodes:  qavResult.reasonCodes  || [],
