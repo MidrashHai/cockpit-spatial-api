@@ -1,26 +1,31 @@
 /**
  * qavanah-bridge.js
  * Makom Intelligence™ · CorreIA LLC
- * Version : 2.1.0
+ * Version : 2.2.0
  * Date    : 2026-08-14
+ *
+ * CHANGEMENTS v2.2.0 · Priority 3 · Pipeline Bereshit 1:3
+ *   · action.sequence_id transmis dans action (et non seulement dans intent)
+ *   · action.step_id transmis = type de l'action TAL normalisé
+ *   · Qavanah peut maintenant activer MOD-086 + MOD-025 :
+ *       MOD-086 : charger SEQ-* depuis PostgreSQL
+ *       MOD-025 : vérifier la transition current_state → step_id
+ *   · qavanah.sequence retourné dans la réponse enrichie
  *
  * CHANGEMENTS v2.1.0
  *   · fetchZera() : appel GET /v1/zera/:icl → qavanah-api
  *   · context.zera injecté depuis la graine réelle ZM-{icl}
- *   · Format zera normalisé depuis la réponse qavanah-api
- *   · Fallback : zera null si ICL absent ou graine non trouvée
- *   · Log zera_id + seed_version dans chaque appel bridge
  *
  * CHANGEMENTS v2.0.0
- *   · Mapping ACTION_HOQ_MAP : action TAL → hoq_id + sequence_id
+ *   · ACTION_HOQ_MAP : action TAL → hoq_id + sequence_id
  *   · Contexte enrichi : place + state résolus depuis ICL
- *   · intent.scope   : hoq_id transmis à Qavanah
- *   · intent.sequence_id : sequence_id transmis à Qavanah
+ *   · intent.scope : hoq_id transmis à Qavanah
  *
  * Pont entre cockpit-spatial-api (Or haBayit™) et QAVANAH API™
  * Loi E-02   : jamais appelé depuis le frontend · côté serveur uniquement
  * Loi Fallback : si Qavanah injoignable → continuer en mode dégradé gracieux
  * Loi Zera   : le Zera est un composant réel du contexte · pas un bonus de score
+ * Loi HOQ    : chaque action TAL est liée à une séquence identifiée · jamais anonyme
  */
 
 'use strict';
@@ -111,22 +116,27 @@ function normalizeAction(talAction) {
 
 // ─── MAPPING ACTION TAL → HOQ OMEH.AI ────────────────────────────────────────
 // Référence : OMEH-HOQ-MATRIX-002 · 17 Hoqim · Golden Dataset OmeH.ai v1.0
+// step_id = type de l'action TAL · correspond à l'étape dans la séquence
 
 const ACTION_HOQ_MAP = {
-  'SEARCH_PLACE':    { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
-  'SEARCH_NUMBER':   { hoq_id: 'OMEH-HOQ-012', sequence_id: 'SEQ-ADRESSE-001'      },
-  'FLY_TO':          { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
-  'ZOOM_TO':         { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
-  'HIGHLIGHT_PLACE': { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
-  'HIGHLIGHT_ROAD':  { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
-  'RESET_VIEW':      { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
-  'PLACE_MARKER':    { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
-  'SHOW_LAYER':      { hoq_id: 'OMEH-HOQ-007', sequence_id: 'SEQ-ARCHITECTURE-001' },
-  'HIDE_LAYER':      { hoq_id: 'OMEH-HOQ-007', sequence_id: 'SEQ-ARCHITECTURE-001' },
-  'START_GPS':       { hoq_id: 'OMEH-HOQ-010', sequence_id: 'SEQ-FALLBACK-001'     },
+  'SEARCH_PLACE':    { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'SEARCH_PLACE'    },
+  'SEARCH_NUMBER':   { hoq_id: 'OMEH-HOQ-012', sequence_id: 'SEQ-ADRESSE-001',      step_id: 'SEARCH_NUMBER'   },
+  'FLY_TO':          { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'FLY_TO'          },
+  'ZOOM_TO':         { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'ZOOM_TO'         },
+  'HIGHLIGHT_PLACE': { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'HIGHLIGHT_PLACE' },
+  'HIGHLIGHT_ROAD':  { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'HIGHLIGHT_ROAD'  },
+  'RESET_VIEW':      { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'RESET_VIEW'      },
+  'PLACE_MARKER':    { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001',   step_id: 'PLACE_MARKER'    },
+  'SHOW_LAYER':      { hoq_id: 'OMEH-HOQ-007', sequence_id: 'SEQ-ARCHITECTURE-001', step_id: 'SHOW_LAYER'      },
+  'HIDE_LAYER':      { hoq_id: 'OMEH-HOQ-007', sequence_id: 'SEQ-ARCHITECTURE-001', step_id: 'HIDE_LAYER'      },
+  'START_GPS':       { hoq_id: 'OMEH-HOQ-010', sequence_id: 'SEQ-FALLBACK-001',     step_id: 'START_GPS'       },
 };
 
-const HOQ_DEFAULT = { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001' };
+const HOQ_DEFAULT = {
+  hoq_id:      'OMEH-HOQ-001',
+  sequence_id: 'SEQ-TERRITOIRE-001',
+  step_id:     'SEARCH_PLACE'
+};
 
 // ─── RÉSOLUTION CONTEXTE TERRITORIAL ─────────────────────────────────────────
 function resolveContextFromICL(icl) {
@@ -151,7 +161,6 @@ function resolveContextFromICL(icl) {
 // ─── FETCH ZERA DEPUIS QAVANAH API ───────────────────────────────────────────
 // Appel GET /v1/zera/:icl · retourne le contexte zera normalisé
 // Loi Zera : composant réel du contexte · pas un bonus de score
-// Format ICL : "LLLL|OOOO" · pipe encodé %7C pour l'URL
 
 async function fetchZera(icl, qavanah_url, timeoutMs = 3000) {
   if (!icl || !qavanah_url) return null;
@@ -193,8 +202,6 @@ async function fetchZera(icl, qavanah_url, timeoutMs = 3000) {
 
     const z = zeraRaw.zera;
 
-    // Normaliser vers le format attendu par Qavanah /v1/qavanah/check
-    // Format validé en production · ZM-4331-2136-v1 · 14 Août 2026
     const zeraContext = {
       zeraId:      z.zera_id,
       seedVersion: z.seed_version,
@@ -310,7 +317,7 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
     };
   }
 
-  // 2 · Résoudre HOQ depuis le type d'action TAL
+  // 2 · Résoudre HOQ + sequence_id + step_id depuis le type d'action TAL
   const hoqMapping  = ACTION_HOQ_MAP[talResult.action.type] || HOQ_DEFAULT;
 
   // 3 · Résoudre ICL et contexte territorial
@@ -318,23 +325,25 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
   const resolvedCtx = resolveContextFromICL(icl);
 
   // 4 · Charger le Zera réel depuis Qavanah API
-  // Zera = composant réel du contexte · pas un bonus de score
-  // Priorité : zera fourni par l'appelant > zera chargé depuis ICL
   const zeraContext = context.zera || await fetchZera(icl, qavanah_url);
 
-  // 5 · Construire identifiants de trajectoire
+  // 5 · Construire identifiants
   const trajectoryId = context.trajectoryId || `TRJ-OHB-${Date.now().toString(36).toUpperCase()}`;
   const sessionId    = context.sessionId    || 'unknown-session';
 
-  // 6 · Construire le payload Qavanah complet
+  // 6 · Construire le payload Qavanah complet · v2.2.0
+  // Pipeline Bereshit 1:3 :
+  //   MOD-247 : action.type vérifié dans catalogue
+  //   MOD-086 : action.sequence_id → charger contrat depuis PostgreSQL
+  //   MOD-025 : action.step_id → vérifier transition depuis current_state
+  //   MOD-207a : context.icl → vérifier contexte territorial résolu
   const payload = {
     trajectoryId,
     intent: {
       contractId:  `IC-OHB-${sessionId}`,
       version:     1,
       source:      'USER_CONFIRMED',
-      scope:       hoqMapping.hoq_id,
-      sequence_id: hoqMapping.sequence_id
+      scope:       hoqMapping.hoq_id
     },
     context: {
       contextId: generateBridgeId('CTX'),
@@ -348,10 +357,13 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
       model: 'claude-sonnet-4-6',
       step:  context.step || 1
     },
+    // v2.2.0 · sequence_id + step_id dans action pour activer MOD-086 + MOD-025
     action: {
-      id:         generateBridgeId('ACT'),
-      type:       talResult.action.type,
-      parameters: talResult.action.parameters
+      id:          generateBridgeId('ACT'),
+      type:        talResult.action.type,
+      sequence_id: hoqMapping.sequence_id,   // ← MOD-086 charge ce contrat
+      step_id:     hoqMapping.step_id,       // ← MOD-025 vérifie cette transition
+      parameters:  talResult.action.parameters
     }
   };
 
@@ -363,9 +375,12 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
       `[QAVANAH-BRIDGE] ${talResult.action.type}` +
       ` → ${qavanah_decision.decision}` +
       ` · hoq=${hoqMapping.hoq_id}` +
+      ` · seq=${hoqMapping.sequence_id}` +
+      ` · step=${hoqMapping.step_id}` +
       ` · zera=${zeraContext ? zeraContext.zeraId : 'null'}` +
       ` · composite=${qavanah_decision.alignment?.composite ?? 'n/a'}` +
-      ` · tension=${qavanah_decision.drift?.tension ?? 'n/a'}`
+      ` · tension=${qavanah_decision.drift?.tension ?? 'n/a'}` +
+      ` · seq_result=${qavanah_decision.sequence?.reason ?? 'n/a'}`
     );
 
     return {
@@ -376,12 +391,14 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
       checkId:        qavanah_decision.checkId,
       hoq_id:         hoqMapping.hoq_id,
       sequence_id:    hoqMapping.sequence_id,
+      step_id:        hoqMapping.step_id,
       zera_id:        zeraContext?.zeraId      || null,
       zera_version:   zeraContext?.seedVersion || null,
       action:         talResult.action,
       talRaw:         talResult.raw,
       alignment:      qavanah_decision.alignment,
       drift:          qavanah_decision.drift,
+      sequence:       qavanah_decision.sequence || null,   // ← résultat MOD-086/025
       reasonCodes:    qavanah_decision.reasonCodes,
       evidence:       qavanah_decision.evidence,
       next:           qavanah_decision.next,
@@ -403,7 +420,7 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
 }
 
 function buildNote(decision) {
-  if (decision.decision === 'ALLOW')  return `ALLOW · composite=${decision.alignment?.composite} · ${decision.drift?.state}`;
+  if (decision.decision === 'ALLOW')  return `ALLOW · composite=${decision.alignment?.composite} · ${decision.drift?.state} · seq=${decision.sequence?.reason ?? 'n/a'}`;
   if (decision.decision === 'ADJUST') return `ADJUST · ${decision.reasonCodes?.join(', ')} · RECOMPUTE`;
   if (decision.decision === 'BLOCK')  return `BLOCK · ${decision.reasonCodes?.join(', ')} · STOP`;
   return 'UNKNOWN';
@@ -422,9 +439,11 @@ function enrichResponse(claudeResponse, qavResult) {
       trajectoryId: qavResult.trajectoryId || null,
       hoq_id:       qavResult.hoq_id       || null,
       sequence_id:  qavResult.sequence_id  || null,
+      step_id:      qavResult.step_id      || null,
       zera_id:      qavResult.zera_id      || null,
       zera_version: qavResult.zera_version || null,
       action:       qavResult.action       || null,
+      sequence:     qavResult.sequence     || null,   // ← résultat pipeline
       alignment:    qavResult.alignment    || null,
       drift:        qavResult.drift        || null,
       reasonCodes:  qavResult.reasonCodes  || [],
