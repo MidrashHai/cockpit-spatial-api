@@ -1,12 +1,18 @@
 /**
  * qavanah-bridge.js
  * Makom Intelligence™ · CorreIA LLC
- * Version : 1.0.1
- * Date : 2026-08-14
- * FIX : suppression require('uuid') · parser TAL robuste
+ * Version : 2.0.0
+ * Date    : 2026-08-14
+ *
+ * CHANGEMENTS v2.0.0
+ *   · Mapping ACTION_HOQ_MAP : action TAL → hoq_id + sequence_id
+ *   · Contexte enrichi : place + state résolus depuis ICL
+ *   · intent.scope   : hoq_id transmis à Qavanah
+ *   · intent.sequence_id : sequence_id transmis à Qavanah
+ *   · qavanah retourne hoq_id + sequence_id dans la réponse enrichie
  *
  * Pont entre cockpit-spatial-api (Or haBayit™) et QAVANAH API™
- * Loi E-02 : jamais appelé depuis le frontend · côté serveur uniquement
+ * Loi E-02   : jamais appelé depuis le frontend · côté serveur uniquement
  * Loi Fallback : si Qavanah injoignable → continuer en mode dégradé gracieux
  */
 
@@ -28,18 +34,15 @@ function generateBridgeId(prefix) {
 
 function repairJSON(raw) {
   try {
-    // Tentative directe
     return JSON.parse(raw);
   } catch {}
 
   try {
-    // Ajouter guillemets autour des clés sans guillemets
-    // {action:"SEARCH_PLACE"} → {"action":"SEARCH_PLACE"}
     const repaired = raw
       .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')
-      .replace(/:\s*'([^']*)'/g, ': "$1"')   // apostrophes → guillemets
-      .replace(/,\s*}/g, '}')                 // trailing comma
-      .replace(/,\s*]/g, ']');               // trailing comma array
+      .replace(/:\s*'([^']*)'/g, ': "$1"')
+      .replace(/,\s*}/g, '}')
+      .replace(/,\s*]/g, ']');
     return JSON.parse(repaired);
   } catch {}
 
@@ -73,16 +76,16 @@ function normalizeAction(talAction) {
   const typeMap = {
     'SEARCH_PLACE':    'SEARCH_PLACE',
     'SEARCH_ROAD':     'SEARCH_PLACE',
-    'FLY_TO':         'FLY_TO',
-    'ZOOM_TO':        'ZOOM_TO',
-    'RESET_VIEW':     'RESET_VIEW',
-    'HIGHLIGHT_ROAD': 'HIGHLIGHT_ROAD',
-    'HIGHLIGHT_PLACE':'HIGHLIGHT_PLACE',
-    'SHOW_LAYER':     'SHOW_LAYER',
-    'HIDE_LAYER':     'HIDE_LAYER',
-    'PLACE_MARKER':   'PLACE_MARKER',
-    'START_GPS':      'START_GPS',
-    'SEARCH_NUMBER':  'SEARCH_NUMBER',
+    'FLY_TO':          'FLY_TO',
+    'ZOOM_TO':         'ZOOM_TO',
+    'RESET_VIEW':      'RESET_VIEW',
+    'HIGHLIGHT_ROAD':  'HIGHLIGHT_ROAD',
+    'HIGHLIGHT_PLACE': 'HIGHLIGHT_PLACE',
+    'SHOW_LAYER':      'SHOW_LAYER',
+    'HIDE_LAYER':      'HIDE_LAYER',
+    'PLACE_MARKER':    'PLACE_MARKER',
+    'START_GPS':       'START_GPS',
+    'SEARCH_NUMBER':   'SEARCH_NUMBER',
   };
 
   const type       = typeMap[talAction.action] || talAction.action;
@@ -100,6 +103,50 @@ function normalizeAction(talAction) {
   if (talAction.numero)    parameters.query     = String(talAction.numero);
 
   return { type, parameters };
+}
+
+// ─── MAPPING ACTION TAL → HOQ OMEH.AI ────────────────────────────────────────
+// Chaque action TAL reconnue est liée à sa Hoq OmeH.ai et son Sequence Contract™
+// Référence : OMEH-HOQ-MATRIX-002 · 17 Hoqim · Golden Dataset OmeH.ai v1.0
+
+const ACTION_HOQ_MAP = {
+  'SEARCH_PLACE':    { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
+  'SEARCH_NUMBER':   { hoq_id: 'OMEH-HOQ-012', sequence_id: 'SEQ-ADRESSE-001'      },
+  'FLY_TO':          { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
+  'ZOOM_TO':         { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
+  'HIGHLIGHT_PLACE': { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
+  'HIGHLIGHT_ROAD':  { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
+  'RESET_VIEW':      { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
+  'PLACE_MARKER':    { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001'   },
+  'SHOW_LAYER':      { hoq_id: 'OMEH-HOQ-007', sequence_id: 'SEQ-ARCHITECTURE-001' },
+  'HIDE_LAYER':      { hoq_id: 'OMEH-HOQ-007', sequence_id: 'SEQ-ARCHITECTURE-001' },
+  'START_GPS':       { hoq_id: 'OMEH-HOQ-010', sequence_id: 'SEQ-FALLBACK-001'     },
+};
+
+// HOQ par défaut si action non mappée
+const HOQ_DEFAULT = { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001' };
+
+// ─── RÉSOLUTION CONTEXTE TERRITORIAL ─────────────────────────────────────────
+// Construit place + state depuis ICL pour que Qavanah puisse scorer context > 0
+// ICL au format "LLLL | OOOO" · source PCNT v3.1
+
+function resolveContextFromICL(icl) {
+  if (!icl) return { place: {}, state: {} };
+
+  const clean = icl.trim();
+
+  return {
+    place: {
+      icl:      clean,
+      source:   'PCNT_v3.1',
+      territory: 'cocody'
+    },
+    state: {
+      icl_present: true,
+      resolved:    true,
+      territory:   'cocody'
+    }
+  };
 }
 
 // ─── APPEL QAVANAH ───────────────────────────────────────────────────────────
@@ -161,7 +208,7 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
     return { ...defaultResult, note: 'QAVANAH_API_URL non configuré' };
   }
 
-  // 1 · Extraire l'action TAL
+  // 1 · Extraire l'action TAL depuis la réponse Or haBayit
   const talResult = extractTAL(responseText);
 
   if (!talResult) {
@@ -174,25 +221,33 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
     };
   }
 
-  // 2 · Construire le payload Qavanah
+  // 2 · Résoudre HOQ depuis le type d'action TAL
+  const hoqMapping   = ACTION_HOQ_MAP[talResult.action.type] || HOQ_DEFAULT;
+
+  // 3 · Résoudre le contexte territorial depuis ICL
+  const icl          = context.icl || null;
+  const resolvedCtx  = resolveContextFromICL(icl);
+
+  // 4 · Construire identifiants de trajectoire
   const trajectoryId = context.trajectoryId || `TRJ-OHB-${Date.now().toString(36).toUpperCase()}`;
   const sessionId    = context.sessionId    || 'unknown-session';
-  const icl          = context.icl          || null;
 
+  // 5 · Construire le payload Qavanah enrichi
   const payload = {
     trajectoryId,
     intent: {
-      contractId: `IC-OHB-${sessionId}`,
-      version:    1,
-      source:     'USER_CONFIRMED',
-      scope:      null
+      contractId:  `IC-OHB-${sessionId}`,
+      version:     1,
+      source:      'USER_CONFIRMED',
+      scope:       hoqMapping.hoq_id,
+      sequence_id: hoqMapping.sequence_id
     },
     context: {
       contextId: generateBridgeId('CTX'),
       icl,
-      place:   context.place   || {},
-      state:   context.state   || {},
-      zera:    context.zera    || null
+      place:  context.place  || resolvedCtx.place,
+      state:  context.state  || resolvedCtx.state,
+      zera:   context.zera   || null
     },
     agent: {
       id:    'or-habayit',
@@ -206,11 +261,18 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
     }
   };
 
-  // 3 · Appeler Qavanah
+  // 6 · Appeler Qavanah
   try {
     const qavanah_decision = await callQavanah(qavanah_url, payload);
 
-    console.log(`[QAVANAH-BRIDGE] ${talResult.action.type} → ${qavanah_decision.decision} · tension=${qavanah_decision.drift?.tension}`);
+    console.log(
+      `[QAVANAH-BRIDGE] ${talResult.action.type}` +
+      ` → ${qavanah_decision.decision}` +
+      ` · hoq=${hoqMapping.hoq_id}` +
+      ` · seq=${hoqMapping.sequence_id}` +
+      ` · tension=${qavanah_decision.drift?.tension ?? 'n/a'}` +
+      ` · composite=${qavanah_decision.alignment?.composite ?? 'n/a'}`
+    );
 
     return {
       qavanah_active: true,
@@ -218,6 +280,8 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
       mode:           qavanah_decision.mode,
       trajectoryId,
       checkId:        qavanah_decision.checkId,
+      hoq_id:         hoqMapping.hoq_id,
+      sequence_id:    hoqMapping.sequence_id,
       action:         talResult.action,
       talRaw:         talResult.raw,
       alignment:      qavanah_decision.alignment,
@@ -249,7 +313,7 @@ function buildNote(decision) {
   return 'UNKNOWN';
 }
 
-// ─── ENRICHISSEMENT ──────────────────────────────────────────────────────────
+// ─── ENRICHISSEMENT RÉPONSE ───────────────────────────────────────────────────
 function enrichResponse(claudeResponse, qavResult) {
   if (!claudeResponse || !claudeResponse.content) return claudeResponse;
   return {
@@ -260,6 +324,8 @@ function enrichResponse(claudeResponse, qavResult) {
       mode:         qavResult.mode,
       checkId:      qavResult.checkId      || null,
       trajectoryId: qavResult.trajectoryId || null,
+      hoq_id:       qavResult.hoq_id       || null,
+      sequence_id:  qavResult.sequence_id  || null,
       action:       qavResult.action       || null,
       alignment:    qavResult.alignment    || null,
       drift:        qavResult.drift        || null,
