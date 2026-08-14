@@ -1,19 +1,26 @@
 /**
  * qavanah-bridge.js
  * Makom Intelligence™ · CorreIA LLC
- * Version : 2.0.0
+ * Version : 2.1.0
  * Date    : 2026-08-14
+ *
+ * CHANGEMENTS v2.1.0
+ *   · fetchZera() : appel GET /v1/zera/:icl → qavanah-api
+ *   · context.zera injecté depuis la graine réelle ZM-{icl}
+ *   · Format zera normalisé depuis la réponse qavanah-api
+ *   · Fallback : zera null si ICL absent ou graine non trouvée
+ *   · Log zera_id + seed_version dans chaque appel bridge
  *
  * CHANGEMENTS v2.0.0
  *   · Mapping ACTION_HOQ_MAP : action TAL → hoq_id + sequence_id
  *   · Contexte enrichi : place + state résolus depuis ICL
  *   · intent.scope   : hoq_id transmis à Qavanah
  *   · intent.sequence_id : sequence_id transmis à Qavanah
- *   · qavanah retourne hoq_id + sequence_id dans la réponse enrichie
  *
  * Pont entre cockpit-spatial-api (Or haBayit™) et QAVANAH API™
  * Loi E-02   : jamais appelé depuis le frontend · côté serveur uniquement
  * Loi Fallback : si Qavanah injoignable → continuer en mode dégradé gracieux
+ * Loi Zera   : le Zera est un composant réel du contexte · pas un bonus de score
  */
 
 'use strict';
@@ -29,9 +36,6 @@ function generateBridgeId(prefix) {
 }
 
 // ─── EXTRACTION TAL · ROBUSTE ─────────────────────────────────────────────────
-// Tente de réparer le JSON avant d'abandonner
-// Gère : clés sans guillemets · virgules trailing · apostrophes
-
 function repairJSON(raw) {
   try {
     return JSON.parse(raw);
@@ -106,7 +110,6 @@ function normalizeAction(talAction) {
 }
 
 // ─── MAPPING ACTION TAL → HOQ OMEH.AI ────────────────────────────────────────
-// Chaque action TAL reconnue est liée à sa Hoq OmeH.ai et son Sequence Contract™
 // Référence : OMEH-HOQ-MATRIX-002 · 17 Hoqim · Golden Dataset OmeH.ai v1.0
 
 const ACTION_HOQ_MAP = {
@@ -123,13 +126,9 @@ const ACTION_HOQ_MAP = {
   'START_GPS':       { hoq_id: 'OMEH-HOQ-010', sequence_id: 'SEQ-FALLBACK-001'     },
 };
 
-// HOQ par défaut si action non mappée
 const HOQ_DEFAULT = { hoq_id: 'OMEH-HOQ-001', sequence_id: 'SEQ-TERRITOIRE-001' };
 
 // ─── RÉSOLUTION CONTEXTE TERRITORIAL ─────────────────────────────────────────
-// Construit place + state depuis ICL pour que Qavanah puisse scorer context > 0
-// ICL au format "LLLL | OOOO" · source PCNT v3.1
-
 function resolveContextFromICL(icl) {
   if (!icl) return { place: {}, state: {} };
 
@@ -137,8 +136,8 @@ function resolveContextFromICL(icl) {
 
   return {
     place: {
-      icl:      clean,
-      source:   'PCNT_v3.1',
+      icl:       clean,
+      source:    'PCNT_v3.1',
       territory: 'cocody'
     },
     state: {
@@ -149,7 +148,97 @@ function resolveContextFromICL(icl) {
   };
 }
 
-// ─── APPEL QAVANAH ───────────────────────────────────────────────────────────
+// ─── FETCH ZERA DEPUIS QAVANAH API ───────────────────────────────────────────
+// Appel GET /v1/zera/:icl · retourne le contexte zera normalisé
+// Loi Zera : composant réel du contexte · pas un bonus de score
+// Format ICL : "LLLL|OOOO" · pipe encodé %7C pour l'URL
+
+async function fetchZera(icl, qavanah_url, timeoutMs = 3000) {
+  if (!icl || !qavanah_url) return null;
+
+  try {
+    const iclEncoded = icl.trim().replace('|', '%7C');
+    const urlStr     = `${qavanah_url}/v1/zera/${iclEncoded}`;
+    const parsedUrl  = new URL(urlStr);
+    const isHttps    = parsedUrl.protocol === 'https:';
+    const lib        = isHttps ? https : http;
+
+    const zeraRaw = await new Promise((resolve, reject) => {
+      const opts = {
+        hostname: parsedUrl.hostname,
+        port:     parsedUrl.port || (isHttps ? 443 : 80),
+        path:     parsedUrl.pathname,
+        method:   'GET',
+        headers:  { 'Content-Type': 'application/json' }
+      };
+
+      const req = lib.request(opts, (res) => {
+        let raw = '';
+        res.on('data', d => raw += d);
+        res.on('end', () => {
+          try { resolve(JSON.parse(raw)); }
+          catch { reject(new Error('ZERA_PARSE_ERROR')); }
+        });
+      });
+
+      req.on('error', reject);
+      req.setTimeout(timeoutMs, () => {
+        req.destroy();
+        reject(new Error('ZERA_TIMEOUT'));
+      });
+      req.end();
+    });
+
+    if (!zeraRaw || !zeraRaw.zera) return null;
+
+    const z = zeraRaw.zera;
+
+    // Normaliser vers le format attendu par Qavanah /v1/qavanah/check
+    // Format validé en production · ZM-4331-2136-v1 · 14 Août 2026
+    const zeraContext = {
+      zeraId:      z.zera_id,
+      seedVersion: z.seed_version,
+      state:       z.formation_state,
+      confidence:  parseFloat(z.confidence) || 1,
+      convergence: z.observed_features?.convergence || null,
+      spatial: {
+        latitude:  z.spatial_signature?.latitude,
+        longitude: z.spatial_signature?.longitude,
+        quadrant:  z.spatial_signature?.quadrant
+      },
+      structural: {
+        place_type:        z.structural_signature?.place_type,
+        boundary_detected: z.structural_signature?.boundary_detected,
+        thresholds:        z.structural_signature?.thresholds
+      },
+      observed: {
+        voirie_proche:   z.observed_features?.voirie_proche,
+        distance_voirie: z.observed_features?.distance_voirie,
+        pada_count:      z.observed_features?.pada_count,
+        source:          z.observed_features?.source
+      },
+      territorial: {
+        zone:      z.territorial_signature?.zone,
+        territory: z.territorial_signature?.territory
+      }
+    };
+
+    console.log(
+      `[QAVANAH-BRIDGE] Zera chargé · ${z.zera_id}` +
+      ` v${z.seed_version} · ${z.formation_state}` +
+      ` · voirie=${z.observed_features?.voirie_proche || 'n/a'}` +
+      ` · confidence=${z.confidence}`
+    );
+
+    return zeraContext;
+
+  } catch (err) {
+    console.warn(`[QAVANAH-BRIDGE] Zera non résolu pour ICL ${icl} : ${err.message}`);
+    return null;
+  }
+}
+
+// ─── APPEL QAVANAH CHECK ─────────────────────────────────────────────────────
 function callQavanah(qavanah_url, payload, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
     try {
@@ -222,17 +311,22 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
   }
 
   // 2 · Résoudre HOQ depuis le type d'action TAL
-  const hoqMapping   = ACTION_HOQ_MAP[talResult.action.type] || HOQ_DEFAULT;
+  const hoqMapping  = ACTION_HOQ_MAP[talResult.action.type] || HOQ_DEFAULT;
 
-  // 3 · Résoudre le contexte territorial depuis ICL
-  const icl          = context.icl || null;
-  const resolvedCtx  = resolveContextFromICL(icl);
+  // 3 · Résoudre ICL et contexte territorial
+  const icl         = context.icl || null;
+  const resolvedCtx = resolveContextFromICL(icl);
 
-  // 4 · Construire identifiants de trajectoire
+  // 4 · Charger le Zera réel depuis Qavanah API
+  // Zera = composant réel du contexte · pas un bonus de score
+  // Priorité : zera fourni par l'appelant > zera chargé depuis ICL
+  const zeraContext = context.zera || await fetchZera(icl, qavanah_url);
+
+  // 5 · Construire identifiants de trajectoire
   const trajectoryId = context.trajectoryId || `TRJ-OHB-${Date.now().toString(36).toUpperCase()}`;
   const sessionId    = context.sessionId    || 'unknown-session';
 
-  // 5 · Construire le payload Qavanah enrichi
+  // 6 · Construire le payload Qavanah complet
   const payload = {
     trajectoryId,
     intent: {
@@ -247,7 +341,7 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
       icl,
       place:  context.place  || resolvedCtx.place,
       state:  context.state  || resolvedCtx.state,
-      zera:   context.zera   || null
+      zera:   zeraContext
     },
     agent: {
       id:    'or-habayit',
@@ -261,7 +355,7 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
     }
   };
 
-  // 6 · Appeler Qavanah
+  // 7 · Appeler Qavanah check
   try {
     const qavanah_decision = await callQavanah(qavanah_url, payload);
 
@@ -269,9 +363,9 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
       `[QAVANAH-BRIDGE] ${talResult.action.type}` +
       ` → ${qavanah_decision.decision}` +
       ` · hoq=${hoqMapping.hoq_id}` +
-      ` · seq=${hoqMapping.sequence_id}` +
-      ` · tension=${qavanah_decision.drift?.tension ?? 'n/a'}` +
-      ` · composite=${qavanah_decision.alignment?.composite ?? 'n/a'}`
+      ` · zera=${zeraContext ? zeraContext.zeraId : 'null'}` +
+      ` · composite=${qavanah_decision.alignment?.composite ?? 'n/a'}` +
+      ` · tension=${qavanah_decision.drift?.tension ?? 'n/a'}`
     );
 
     return {
@@ -282,6 +376,8 @@ async function checkWithQavanah(responseText, context, qavanah_url) {
       checkId:        qavanah_decision.checkId,
       hoq_id:         hoqMapping.hoq_id,
       sequence_id:    hoqMapping.sequence_id,
+      zera_id:        zeraContext?.zeraId      || null,
+      zera_version:   zeraContext?.seedVersion || null,
       action:         talResult.action,
       talRaw:         talResult.raw,
       alignment:      qavanah_decision.alignment,
@@ -326,6 +422,8 @@ function enrichResponse(claudeResponse, qavResult) {
       trajectoryId: qavResult.trajectoryId || null,
       hoq_id:       qavResult.hoq_id       || null,
       sequence_id:  qavResult.sequence_id  || null,
+      zera_id:      qavResult.zera_id      || null,
+      zera_version: qavResult.zera_version || null,
       action:       qavResult.action       || null,
       alignment:    qavResult.alignment    || null,
       drift:        qavResult.drift        || null,
@@ -338,6 +436,7 @@ function enrichResponse(claudeResponse, qavResult) {
 module.exports = {
   extractTAL,
   normalizeAction,
+  fetchZera,
   checkWithQavanah,
   enrichResponse
 };
