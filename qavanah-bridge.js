@@ -1,7 +1,7 @@
 /**
  * qavanah-bridge.js
  * Makom Intelligence™ · CorreIA LLC
- * Version : 2.2.1
+ * Version : 2.2.2
  * Date    : 2026-08-14
  *
  * CHANGEMENTS v2.2.1 · Correction step_id
@@ -162,7 +162,9 @@ const ACTION_HOQ_MAP = {
   'SHOW_LAYER':      { hoq_id: 'OMEH-HOQ-007', sequence_id: 'SEQ-ARCHITECTURE-001', step_id: 'ACTIONS'            },
   'HIDE_LAYER':      { hoq_id: 'OMEH-HOQ-007', sequence_id: 'SEQ-ARCHITECTURE-001', step_id: 'ACTIONS'            },
   // GPS → SEQ-FALLBACK-001 · étape finale CONTEXTE_DISPONIBLE
-  'START_GPS':       { hoq_id: 'OMEH-HOQ-010', sequence_id: 'SEQ-FALLBACK-001',     step_id: 'CONTEXTE_DISPONIBLE'},
+  'START_GPS':                   { hoq_id: 'OMEH-HOQ-010', sequence_id: 'SEQ-FALLBACK-001',       step_id: 'CONTEXTE_DISPONIBLE' },
+  // HOQ-018 · SEQ-HIGHLIGHT-VOIE-001 · allumer toutes les adresses d'une voie
+  'HIGHLIGHT_ADDRESSES_BY_VOIE': { hoq_id: 'OMEH-HOQ-018', sequence_id: 'SEQ-HIGHLIGHT-VOIE-001', step_id: 'OR_HABAYIT'           },
 };
 
 const HOQ_DEFAULT = {
